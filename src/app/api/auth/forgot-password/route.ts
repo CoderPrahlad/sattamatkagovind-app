@@ -30,7 +30,7 @@ export async function POST(request: Request) {
       if (!result.valid) {
         return NextResponse.json(
           { success: false, error: result.error },
-          { status: 401 }
+          { status: 400 }
         );
       }
 
@@ -60,7 +60,7 @@ export async function POST(request: Request) {
       if (!isOTPVerified(mobile)) {
         return NextResponse.json(
           { success: false, error: 'Please verify OTP first' },
-          { status: 401 }
+          { status: 400 }
         );
       }
 

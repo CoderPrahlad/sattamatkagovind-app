@@ -46,7 +46,7 @@ export async function POST(request: Request) {
     if (!otpResult.valid) {
       return NextResponse.json(
         { success: false, error: otpResult.error || 'Invalid OTP. Please verify your mobile number.' },
-        { status: 401 }
+        { status: 400 }
       );
     }
 

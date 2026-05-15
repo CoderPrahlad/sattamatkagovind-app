@@ -46,3 +46,37 @@ Stage Summary:
   - START_MSG_TEMPLATE_ID=0afbdeb0-785d-4dd0-bd48-365a182df276
 - OTPs are being sent successfully via Start Messaging API
 - Email API config preserved as-is (no changes)
+
+---
+Task ID: 3
+Agent: Main
+Task: Fix registration and forgot-password errors showing "Invalid credentials" instead of actual error messages
+
+Work Log:
+- User reported errors during account creation and forgot-password flow
+- Analyzed screenshot: error showed "Invalid credentials. Please check and try again."
+- Traced the error to robustFetch utility in src/lib/fetch.ts
+- Root cause: robustFetch has default noRetryStatuses = [401, 403, 404, 422] - it THROWS immediately for these status codes without returning the response body
+- The API routes for register/forgot-password/send-otp were using 401/403/404 status codes for validation errors
+- When robustFetch throws, the frontend catch block uses getFetchErrorMessage() which maps 401 to "Invalid credentials" - the actual API error message is lost
+
+Fixes Applied:
+1. src/app/api/auth/register/route.ts: Changed OTP validation error from status 401 → 400
+2. src/app/api/auth/forgot-password/route.ts: Changed OTP validation errors from status 401 → 400 (2 places)
+3. src/app/api/auth/send-otp/route.ts: Changed validation errors:
+   - "No account found" for login: 404 → 400
+   - "Account is deactivated": 403 → 400
+   - "No account found" for forgot-password: 404 → 400
+   - SMS API errors: 429 → 400
+4. Status code 400 (Bad Request) is NOT in robustFetch's noRetryStatuses, so the response is properly returned and the frontend can read the actual error message
+
+Testing:
+- curl test: register with wrong OTP → 400 + "No OTP found. Please request a new OTP."
+- curl test: forgot-password with wrong OTP → 400 + "No OTP found. Please request a new OTP."
+- curl test: send-otp for non-existent user → 400 + "No account found with this mobile number"
+- lint check passes clean
+
+Stage Summary:
+- Registration and forgot-password now show proper error messages (e.g., "Invalid OTP", "No OTP found")
+- No more generic "Invalid credentials" error for OTP validation failures
+- Email and SMS API configurations were NOT modified

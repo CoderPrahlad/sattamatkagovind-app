@@ -32,14 +32,14 @@ export async function POST(request: Request) {
       if (!user) {
         return NextResponse.json(
           { success: false, error: 'No account found with this mobile number' },
-          { status: 404 }
+          { status: 400 }
         );
       }
 
       if (!user.isActive) {
         return NextResponse.json(
           { success: false, error: 'Account is deactivated. Contact support.' },
-          { status: 403 }
+          { status: 400 }
         );
       }
     }
@@ -54,7 +54,7 @@ export async function POST(request: Request) {
       if (!user) {
         return NextResponse.json(
           { success: false, error: 'No account found with this mobile number' },
-          { status: 404 }
+          { status: 400 }
         );
       }
     }
@@ -80,7 +80,7 @@ export async function POST(request: Request) {
     if (!result.success) {
       return NextResponse.json(
         { success: false, error: result.error },
-        { status: 429 }
+        { status: 400 }
       );
     }
 
