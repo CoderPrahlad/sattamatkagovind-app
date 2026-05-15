@@ -150,9 +150,31 @@ Latest dev.log shows clean compilation with no errors:
 
 ### Known Issues
 
-1. **Server Process Stability:** The dev server process occasionally dies in the sandbox environment. This appears to be a sandbox resource management issue, not a code issue. When the server is running, all endpoints respond correctly. The system should auto-restart the server via its management mechanism.
+1. **Middleware Deprecation Warning:** Next.js 16 shows a warning about `middleware.ts` being deprecated in favor of `proxy.ts`. The middleware still functions correctly for API rate limiting. This can be addressed in a future update by converting to the proxy convention.
 
-2. **Middleware Deprecation Warning:** Next.js 16 shows a warning about `middleware.ts` being deprecated in favor of `proxy.ts`. The middleware still functions correctly for API rate limiting. This can be addressed in a future update by converting to the proxy convention.
+---
+
+### Fix: Preview Not Showing (2026-05-15 Session 2)
+
+**Problem:** The user reported "preview nhi show raha" (preview not showing). Investigation revealed:
+
+1. **Root Cause:** Turbopack cache corruption in `.next/` directory. The `.zscripts/dev.log` showed:
+   - `TurbopackInternalError: Failed to write page endpoint /_app`
+   - `Failed to restore task data (corrupted database or bug)`
+   - `Unable to open static sorted file 00000098.sst - No such file or directory`
+
+2. **Secondary Issue:** The `package.json` dev command used `--max-old-space-size=6144` which was excessive for the sandbox environment.
+
+**Fixes Applied:**
+
+| File | Change |
+|------|--------|
+| `.next/` directory | Deleted corrupted Turbopack cache |
+| `package.json` | Changed `--max-old-space-size=6144` to `--max-old-space-size=2048` |
+| `eslint.config.mjs` | Added `run-server.js` to ignores |
+| Cleanup | Removed temp files: `dev-keepalive.js`, `keepalive-server.js`, `server-keepalive.js` |
+
+**Server Status:** After clearing the cache and restarting via `.zscripts/dev.sh`, the server runs stably and serves pages correctly through Caddy (port 81).
 
 ---
 
