@@ -11,15 +11,40 @@ export default function Error({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
-  useEffect(() => {
-    // Log the error but don't crash
-    console.error('[MatkaKing] Page error:', error?.message || error);
-  }, [error]);
+  // Detect error types
+  const msg = error?.message || '';
+  const isJsonError = msg.includes('is not valid JSON') || 
+                      msg.includes('Unexpected token') ||
+                      msg.includes('DOCTYPE') ||
+                      msg.includes('Server returned HTML');
 
-  // Detect if this is a JSON parse error (the whitepage issue)
-  const isJsonError = error?.message?.includes('is not valid JSON') || 
-                      error?.message?.includes('Unexpected token') ||
-                      error?.message?.includes('DOCTYPE');
+  const isTransientError = 
+    msg.includes('is not valid JSON') ||
+    msg.includes('Unexpected token') ||
+    msg.includes('DOCTYPE') ||
+    msg.includes('Failed to fetch') ||
+    msg.includes('NetworkError') ||
+    msg.includes('Network request failed') ||
+    msg.includes('Server error') ||
+    msg.includes('Server returned HTML') ||
+    msg.includes('ChunkLoadError') ||
+    msg.includes('Loading chunk') ||
+    msg.includes('timeout');
+
+  useEffect(() => {
+    // Log the error
+    console.error('[MatkaKing] Page error:', error?.message || error);
+
+    // Auto-recover from transient errors after a delay
+    // These are typically caused by server restarts or brief connectivity issues
+    if (isTransientError) {
+      console.log('[MatkaKing] Auto-recovering from transient error...');
+      const timer = setTimeout(() => {
+        reset();
+      }, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [error, reset, isTransientError]);
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4 bg-gray-950">
@@ -29,10 +54,12 @@ export default function Error({
         </div>
         <div>
           <h1 className="text-2xl font-bold text-white mb-2">
-            {isJsonError ? 'Connection Error' : 'Something went wrong'}
+            {isTransientError ? 'Reconnecting...' : isJsonError ? 'Connection Error' : 'Something went wrong'}
           </h1>
           <p className="text-gray-400 text-sm mb-3">
-            {isJsonError 
+            {isTransientError 
+              ? 'Experiencing a brief connectivity issue. Auto-recovering...'
+              : isJsonError 
               ? 'The server returned an unexpected response. This usually happens during server restarts or temporary connectivity issues.'
               : 'An unexpected error occurred. Please try again or contact support if the problem persists.'}
           </p>
@@ -46,9 +73,7 @@ export default function Error({
         <div className="flex gap-3">
           <Button
             onClick={() => {
-              // Clear any cached state that might be causing issues
               if (isJsonError && typeof window !== 'undefined') {
-                // Don't clear auth - just reload the page
                 window.location.reload();
               } else {
                 reset();

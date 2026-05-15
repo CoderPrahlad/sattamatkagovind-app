@@ -34,6 +34,26 @@ function persistAuth(user: User | null, authToken: string | null) {
 // Helper: fetch with auth token + retry + timeout for resilience
 // Automatically handles 401 (session expired) with toast notification and logout
 let sessionExpiredNotified = false;
+
+/**
+ * Wrapper for res.json() that catches HTML responses and throws a proper error.
+ * Prevents the "Unexpected token '<'" crash when the server returns an error page.
+ */
+async function safeResponseJson<T = any>(res: Response): Promise<T> {
+  const contentType = res.headers.get('content-type') || '';
+  if (contentType.includes('text/html') || contentType.includes('text/xml')) {
+    throw new Error('Server returned an error page. Please try again.');
+  }
+  try {
+    return await res.json() as T;
+  } catch (e) {
+    if (e instanceof SyntaxError) {
+      throw new Error('Server returned an invalid response. Please refresh the page.');
+    }
+    throw e;
+  }
+}
+
 function authFetch(url: string, options: RequestInit = {}): Promise<Response> {
   const token = useGameStore.getState().authToken;
   const headers = new Headers(options.headers || {});
@@ -643,7 +663,8 @@ export const useGameStore = create<GameState>((set, get) => ({
         timeout: 6000,
         retries: 0,
       });
-      const json = await res.json();
+      // Use safeJsonParse to prevent "Unexpected token '<'" crash on HTML error pages
+      const json = await safeJsonParse<{ success: boolean; data: { token: string } & Record<string, unknown>; error?: string }>(res);
       if (json.success) {
         const { token: newToken, ...user } = json.data;
         set({
@@ -651,7 +672,7 @@ export const useGameStore = create<GameState>((set, get) => ({
           authToken: newToken || token,
           isAuthenticated: true,
           adminMode: false,
-          currentView: 'home',
+          currentView: get().currentView === 'auth' ? 'home' : get().currentView,
         });
         persistAuth(user, newToken || token);
         get().fetchGames();
@@ -664,9 +685,18 @@ export const useGameStore = create<GameState>((set, get) => ({
       }
     } catch {
       // Network error, timeout, or robustFetch threw for 401/403/404
+      // IMPORTANT: Do NOT clear auth on network errors — the server might just be restarting
+      // Keep the cached auth state so the UI doesn't flicker
       const cached = loadPersistedAuth();
       if (cached.user && cached.authToken) {
-        set({ isAuthenticated: true });
+        // Keep current state — user is likely still authenticated
+        // Just ensure currentView isn't stuck on 'auth'
+        const currentView = get().currentView;
+        if (currentView === 'auth') {
+          set({ isAuthenticated: true, currentView: 'home' });
+        } else {
+          set({ isAuthenticated: true });
+        }
       } else {
         set({ user: null, authToken: null, isAuthenticated: false, currentView: 'auth' });
       }
@@ -708,7 +738,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   fetchGames: async () => {
     try {
       const res = await authFetch('/api/games');
-      const json = await res.json();
+      const json = await safeResponseJson(res);
       if (json.success) {
         // Also refresh selectedGame so it never goes stale
         const currentSelected = get().selectedGame;
@@ -727,7 +757,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   fetchAdminGames: async () => {
     try {
       const res = await authFetch('/api/admin/games');
-      const json = await res.json();
+      const json = await safeResponseJson(res);
       if (json.success) {
         const currentSelected = get().selectedGame;
         let updatedSelected = currentSelected;
@@ -749,7 +779,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       if (filters?.gameId) params.set('gameId', filters.gameId);
       const query = params.toString() ? `?${params.toString()}` : '';
       const res = await authFetch(`/api/bids${query}`);
-      const json = await res.json();
+      const json = await safeResponseJson(res);
       if (json.success) {
         set({ bids: json.data });
       }
@@ -761,7 +791,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   fetchBanners: async () => {
     try {
       const res = await authFetch('/api/banners');
-      const json = await res.json();
+      const json = await safeResponseJson(res);
       if (json.success) {
         set({ banners: Array.isArray(json.data) ? json.data : [] });
       }
@@ -773,7 +803,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   fetchNotifications: async () => {
     try {
       const res = await authFetch('/api/notifications');
-      const json = await res.json();
+      const json = await safeResponseJson(res);
       if (json.success) {
         set({ notifications: json.data });
       }
@@ -785,7 +815,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   fetchWallet: async () => {
     try {
       const res = await authFetch('/api/wallet');
-      const json = await res.json();
+      const json = await safeResponseJson(res);
       if (json.success) {
         set({
           user: get().user ? { ...get().user!, balance: json.data.balance, winningAmount: json.data.winningAmount } : null,
@@ -813,7 +843,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     }
     let json: any;
     try {
-      json = await res.json();
+      json = await safeResponseJson(res);
     } catch {
       throw new Error('Server error. Please try again in a moment.');
     }
@@ -833,7 +863,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ amount, upiNumber, utrNumber, screenshotUrl }),
       });
-      const json = await res.json();
+      const json = await safeResponseJson(res);
       if (!json.success) {
         toast({ title: 'Recharge Failed', description: json.error, variant: 'destructive' });
         return;
@@ -852,7 +882,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
       });
-      const json = await res.json();
+      const json = await safeResponseJson(res);
       if (!json.success) {
         toast({ title: 'Withdrawal Failed', description: json.error, variant: 'destructive' });
         return;
@@ -868,7 +898,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   fetchBankDetail: async () => {
     try {
       const res = await authFetch('/api/bank-detail');
-      const json = await res.json();
+      const json = await safeResponseJson(res);
       if (json.success) {
         set({ bankDetail: json.data || null });
       }
@@ -884,7 +914,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
       });
-      const json = await res.json();
+      const json = await safeResponseJson(res);
       if (!json.success) {
         toast({ title: 'Save Failed', description: json.error, variant: 'destructive' });
         return;
@@ -914,7 +944,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   fetchSiteConfig: async () => {
     try {
       const res = await fetch('/api/config');
-      const json = await res.json();
+      const json = await safeResponseJson(res);
       if (json.success) {
         set({ siteConfig: json.data });
       }
@@ -927,7 +957,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   fetchAdminDashboard: async () => {
     try {
       const res = await authFetch('/api/admin/dashboard');
-      const json = await res.json();
+      const json = await safeResponseJson(res);
       if (json.success && json.data) {
         const data = json.data;
         // Ensure all expected fields exist with safe defaults
@@ -950,7 +980,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       const params = new URLSearchParams({ page: String(page), limit: '20' });
       if (search) params.set('search', search);
       const res = await authFetch(`/api/admin/users?${params.toString()}`);
-      const json = await res.json();
+      const json = await safeResponseJson(res);
       if (json.success) {
         const users = Array.isArray(json.data) ? json.data : (json.data?.users || []);
         set({ adminUsers: users });
@@ -969,7 +999,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       if (filters?.type) params.set('type', filters.type);
       const query = params.toString() ? `?${params.toString()}` : '';
       const res = await authFetch(`/api/admin/wallet${query}`);
-      const json = await res.json();
+      const json = await safeResponseJson(res);
       if (json.success) {
         const data = json.data;
         // API may return {transactions: [...], pagination: {...}} or [...]
@@ -988,7 +1018,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status, adminNote: adminNote || undefined }),
       });
-      const json = await res.json();
+      const json = await safeResponseJson(res);
       if (!json.success) {
         toast({ title: 'Action Failed', description: json.error, variant: 'destructive' });
         return;
@@ -1010,7 +1040,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     } catch {
       throw new Error('Server is not reachable. Please refresh and try again.');
     }
-    const json = await res.json();
+    const json = await safeResponseJson(res);
     if (!json.success) {
       throw new Error(json.error || 'Failed to declare result');
     }
@@ -1027,7 +1057,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
       });
-      const json = await res.json();
+      const json = await safeResponseJson(res);
       if (!json.success) {
         toast({ title: 'Update Failed', description: json.error, variant: 'destructive' });
         return false;
@@ -1048,7 +1078,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ isActive }),
       });
-      const json = await res.json();
+      const json = await safeResponseJson(res);
       if (!json.success) {
         toast({ title: 'Update Failed', description: json.error, variant: 'destructive' });
         return;
@@ -1063,7 +1093,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   fetchAdminConfigs: async () => {
     try {
       const res = await authFetch('/api/admin/config');
-      const json = await res.json();
+      const json = await safeResponseJson(res);
       if (json.success) {
         set({ adminConfigs: Array.isArray(json.data) ? json.data : [] });
       }
@@ -1078,7 +1108,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         method: 'PUT',
         body: JSON.stringify({ configs }),
       });
-      const json = await res.json();
+      const json = await safeResponseJson(res);
       if (!json.success) {
         toast({ title: 'Config Update Failed', description: json.error, variant: 'destructive' });
         return;
@@ -1096,7 +1126,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         method: 'POST',
         body: JSON.stringify(data),
       });
-      const json = await res.json();
+      const json = await safeResponseJson(res);
       if (!json.success) {
         toast({ title: 'Banner Creation Failed', description: json.error, variant: 'destructive' });
         return;
@@ -1115,7 +1145,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
       });
-      const json = await res.json();
+      const json = await safeResponseJson(res);
       if (!json.success) {
         toast({ title: 'Banner Update Failed', description: json.error, variant: 'destructive' });
         return;
@@ -1132,7 +1162,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       const res = await authFetch(`/api/admin/banners/${id}`, {
         method: 'DELETE',
       });
-      const json = await res.json();
+      const json = await safeResponseJson(res);
       if (!json.success) {
         toast({ title: 'Delete Failed', description: json.error, variant: 'destructive' });
         return;
@@ -1154,7 +1184,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       if (filters?.targetDate) params.set('targetDate', filters.targetDate);
       const query = params.toString() ? `?${params.toString()}` : '';
       const res = await authFetch(`/api/admin/bids${query}`);
-      const json = await res.json();
+      const json = await safeResponseJson(res);
       if (json.success) {
         const bids = Array.isArray(json.data) ? json.data : (json.data?.bids || []);
         const summary = json.summary || json.data?.summary || null;
@@ -1172,7 +1202,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         method: 'POST',
         body: JSON.stringify(data),
       });
-      const json = await res.json();
+      const json = await safeResponseJson(res);
       if (!json.success) {
         toast({ title: 'Failed', description: json.error, variant: 'destructive' });
         return;
@@ -1187,7 +1217,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   fetchTickets: async () => {
     try {
       const res = await authFetch('/api/tickets');
-      const json = await res.json();
+      const json = await safeResponseJson(res);
       if (json.success) set({ supportTickets: json.data });
     } catch {}
   },
@@ -1198,7 +1228,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       if (status) params.set('status', status);
       const query = params.toString() ? `?${params.toString()}` : '';
       const res = await authFetch(`/api/admin/tickets${query}`);
-      const json = await res.json();
+      const json = await safeResponseJson(res);
       if (json.success) set({ adminTickets: Array.isArray(json.data) ? json.data : [] });
     } catch {}
   },
@@ -1209,7 +1239,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         method: 'PUT',
         body: JSON.stringify(data),
       });
-      const json = await res.json();
+      const json = await safeResponseJson(res);
       if (!json.success) {
         toast({ title: 'Failed', description: json.error, variant: 'destructive' });
         return;
@@ -1227,7 +1257,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         method: 'POST',
         body: JSON.stringify(data),
       });
-      const json = await res.json();
+      const json = await safeResponseJson(res);
       if (!json.success) {
         toast({ title: 'Failed', description: json.error, variant: 'destructive' });
         return false;
@@ -1244,7 +1274,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   deleteGame: async (id) => {
     try {
       const res = await authFetch(`/api/admin/games/${id}`, { method: 'DELETE' });
-      const json = await res.json();
+      const json = await safeResponseJson(res);
       if (!json.success) {
         toast({ title: 'Failed', description: json.error, variant: 'destructive' });
         return false;
@@ -1264,7 +1294,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         method: 'POST',
         body: JSON.stringify(data),
       });
-      const json = await res.json();
+      const json = await safeResponseJson(res);
       if (!json.success) {
         toast({ title: 'Notification Failed', description: json.error, variant: 'destructive' });
         return;
@@ -1279,7 +1309,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   fetchReferralEarnings: async () => {
     try {
       const res = await authFetch('/api/referral/earnings');
-      const json = await res.json();
+      const json = await safeResponseJson(res);
       if (json.success) {
         set({ referralEarnings: json.data });
       }
@@ -1294,7 +1324,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       if (search) params.set('search', search);
       const query = params.toString() ? `?${params.toString()}` : '';
       const res = await authFetch(`/api/admin/referrals${query}`);
-      const json = await res.json();
+      const json = await safeResponseJson(res);
       if (json.success) {
         set({
           adminReferrals: Array.isArray(json.data) ? json.data : [],

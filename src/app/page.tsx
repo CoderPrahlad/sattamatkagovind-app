@@ -8,19 +8,19 @@ import { useGameStore } from '@/store';
 // Components load only on the client side, reducing initial render cost
 const LoginPage = dynamic(() => import('@/components/auth/LoginPage'), { 
   ssr: false,
-  loading: () => <LoadingScreen />,
+  loading: () => null, // Don't show loading — the overlay handles it
 });
 const RegisterPage = dynamic(() => import('@/components/auth/RegisterPage'), { 
   ssr: false,
-  loading: () => <LoadingScreen />,
+  loading: () => null,
 });
 const ForgotPasswordPage = dynamic(() => import('@/components/auth/ForgotPasswordPage'), { 
   ssr: false,
-  loading: () => <LoadingScreen />,
+  loading: () => null,
 });
 const AppShell = dynamic(() => import('@/components/layout/AppShell'), { 
   ssr: false,
-  loading: () => <LoadingScreen />,
+  loading: () => null,
 });
 
 function LoadingScreen() {
@@ -43,11 +43,15 @@ function LoadingScreen() {
 export default function Page() {
   const { isAuthenticated, currentView, checkSession } = useGameStore();
   const initialized = useRef(false);
+  const [sessionChecked, setSessionChecked] = useState(false);
+  // On first render, if we have cached auth, trust it immediately (no flicker)
   const [showOverlay, setShowOverlay] = useState(true);
 
   const initApp = useCallback(() => {
     checkSession().finally(() => {
-      setTimeout(() => setShowOverlay(false), 200);
+      setSessionChecked(true);
+      // Short delay to let the UI settle before removing overlay
+      setTimeout(() => setShowOverlay(false), 150);
     });
     fetch('/api/init').catch(() => {});
   }, [checkSession]);
@@ -59,20 +63,36 @@ export default function Page() {
     }
   }, [initApp]);
 
+  // Safety: always remove overlay after 3 seconds max
   useEffect(() => {
-    const timer = setTimeout(() => setShowOverlay(false), 5000);
+    const timer = setTimeout(() => {
+      setSessionChecked(true);
+      setShowOverlay(false);
+    }, 3000);
     return () => clearTimeout(timer);
   }, []);
 
-  const mainContent = !isAuthenticated
-    ? (currentView === 'register' ? <RegisterPage /> : 
-       currentView === 'forgot-password' ? <ForgotPasswordPage /> : 
-       <LoginPage />)
-    : <AppShell />;
+  // Determine what to render — use a "stable" view that doesn't flicker
+  // If session hasn't been checked yet and we have cached auth, show the app
+  // This prevents the login → app → login flicker
+  const renderContent = () => {
+    if (!sessionChecked && isAuthenticated) {
+      // Still checking session but we have cached auth — show app shell
+      return <AppShell />;
+    }
+    
+    if (!isAuthenticated) {
+      if (currentView === 'register') return <RegisterPage />;
+      if (currentView === 'forgot-password') return <ForgotPasswordPage />;
+      return <LoginPage />;
+    }
+    
+    return <AppShell />;
+  };
 
   return (
     <>
-      {mainContent}
+      {renderContent()}
       {showOverlay && <LoadingScreen />}
     </>
   );

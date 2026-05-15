@@ -14,6 +14,26 @@ export default function GlobalError({
     console.error('[MatkaKing] Global error:', error?.message || error);
   }
 
+  // Auto-recover from transient errors after 2 seconds
+  const msg = error?.message || '';
+  const isTransientError = 
+    msg.includes('is not valid JSON') ||
+    msg.includes('Unexpected token') ||
+    msg.includes('DOCTYPE') ||
+    msg.includes('ChunkLoadError') ||
+    msg.includes('Loading chunk') ||
+    msg.includes('Failed to fetch');
+
+  if (isTransientError && typeof window !== 'undefined') {
+    setTimeout(() => {
+      try {
+        reset();
+      } catch {
+        window.location.reload();
+      }
+    }, 2000);
+  }
+
   return (
     <html lang="en" className="dark">
       <body className="bg-gray-950 antialiased">
@@ -23,9 +43,13 @@ export default function GlobalError({
               <Crown className="w-10 h-10 text-red-400" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-white mb-2">Something went wrong</h1>
+              <h1 className="text-2xl font-bold text-white mb-2">
+                {isTransientError ? 'Reconnecting...' : 'Something went wrong'}
+              </h1>
               <p className="text-gray-400 text-sm">
-                An unexpected error occurred. This is usually temporary. Please reload the page.
+                {isTransientError 
+                  ? 'Experiencing a brief connectivity issue. Auto-recovering...' 
+                  : 'An unexpected error occurred. This is usually temporary. Please reload the page.'}
               </p>
             </div>
             <div className="flex gap-3">

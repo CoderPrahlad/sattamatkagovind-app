@@ -3,8 +3,7 @@ import type { NextRequest } from 'next/server';
 
 // ── In-memory rate limiter for API routes ──
 // For 10K users, this prevents abuse on auth and financial endpoints
-// NOTE: setInterval removed to prevent memory leaks in edge runtime.
-// Cleanup happens lazily on each request instead.
+// Lazy cleanup happens when map grows too large
 
 interface RateLimitEntry {
   count: number;
@@ -25,37 +24,34 @@ function cleanupExpiredEntries() {
 // Rate limit configurations per route pattern
 const RATE_LIMIT_CONFIGS: { pattern: RegExp; limit: number; windowMs: number }[] = [
   // Auth endpoints — strict limits
-  { pattern: /^\/api\/auth\/login/, limit: 10, windowMs: 60000 },          // 10 login attempts per minute
-  { pattern: /^\/api\/auth\/register/, limit: 5, windowMs: 60000 },        // 5 registrations per minute
-  { pattern: /^\/api\/auth\/send-otp/, limit: 5, windowMs: 60000 },        // 5 OTP requests per minute
-  { pattern: /^\/api\/auth\/forgot-password/, limit: 5, windowMs: 60000 }, // 5 reset attempts per minute
-  { pattern: /^\/api\/auth\/admin-otp/, limit: 5, windowMs: 60000 },       // 5 admin OTP per minute
+  { pattern: /^\/api\/auth\/login/, limit: 10, windowMs: 60000 },
+  { pattern: /^\/api\/auth\/register/, limit: 5, windowMs: 60000 },
+  { pattern: /^\/api\/auth\/send-otp/, limit: 5, windowMs: 60000 },
+  { pattern: /^\/api\/auth\/forgot-password/, limit: 5, windowMs: 60000 },
+  { pattern: /^\/api\/auth\/admin-otp/, limit: 5, windowMs: 60000 },
 
   // Financial endpoints — moderate limits
-  { pattern: /^\/api\/wallet\/recharge/, limit: 10, windowMs: 60000 },     // 10 recharges per minute
-  { pattern: /^\/api\/wallet\/withdraw/, limit: 10, windowMs: 60000 },     // 10 withdrawals per minute
-  { pattern: /^\/api\/bids/, limit: 30, windowMs: 60000 },                 // 30 bids per minute
+  { pattern: /^\/api\/wallet\/recharge/, limit: 10, windowMs: 60000 },
+  { pattern: /^\/api\/wallet\/withdraw/, limit: 10, windowMs: 60000 },
+  { pattern: /^\/api\/bids/, limit: 30, windowMs: 60000 },
 
   // Admin endpoints — generous limits
-  { pattern: /^\/api\/admin/, limit: 100, windowMs: 60000 },               // 100 admin requests per minute
+  { pattern: /^\/api\/admin/, limit: 100, windowMs: 60000 },
 
   // General API — default limit
-  { pattern: /^\/api\//, limit: 60, windowMs: 60000 },                     // 60 requests per minute default
+  { pattern: /^\/api\//, limit: 60, windowMs: 60000 },
 ];
 
 function getRateLimitConfig(pathname: string): { limit: number; windowMs: number } {
-  // Check configs in order — first match wins (more specific patterns first)
   for (const config of RATE_LIMIT_CONFIGS) {
     if (config.pattern.test(pathname)) {
       return { limit: config.limit, windowMs: config.windowMs };
     }
   }
-  return { limit: 60, windowMs: 60000 }; // Default: 60/min
+  return { limit: 60, windowMs: 60000 };
 }
 
 function getClientId(request: NextRequest): string {
-  // Use IP address as client identifier
-  // Behind proxy: x-forwarded-for → first IP
   const forwarded = request.headers.get('x-forwarded-for');
   if (forwarded) {
     return forwarded.split(',')[0].trim();
@@ -66,13 +62,18 @@ function getClientId(request: NextRequest): string {
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Only rate-limit API routes
+  // Only process API routes
   if (!pathname.startsWith('/api/')) {
     return NextResponse.next();
   }
 
   // Skip rate limiting for GET requests on non-sensitive endpoints
   if (request.method === 'GET' && !pathname.startsWith('/api/auth/')) {
+    return NextResponse.next();
+  }
+
+  // Skip for health check and init
+  if (pathname === '/api/health' || pathname === '/api/init') {
     return NextResponse.next();
   }
 
@@ -91,12 +92,10 @@ export function proxy(request: NextRequest) {
   let resetAt: number;
 
   if (!entry || entry.resetAt < now) {
-    // New window
     count = 1;
     resetAt = now + config.windowMs;
     rateLimits.set(key, { count, resetAt });
   } else {
-    // Existing window — increment
     count = entry.count + 1;
     resetAt = entry.resetAt;
     entry.count = count;

@@ -1,4 +1,38 @@
 ---
+Task ID: 2
+Agent: Main Agent
+Task: Fix intermittent blank UI/white page issue
+
+Work Log:
+- Identified 5 root causes of the intermittent blank UI:
+  1. PWA Service Worker auto-reload every 60 seconds (PRIMARY CAUSE)
+  2. Service Worker skipWaiting() forcing immediate activation
+  3. No Next.js middleware (proxy.ts exists but middleware.ts was conflicting)
+  4. Session check state flicker between authenticated/not-authenticated views
+  5. res.json() calls crashing on HTML responses in store
+- Fixed PWARegister.tsx: Removed auto-reload, added "Update Available" banner instead
+- Fixed sw.js: Removed skipWaiting(), added message-based skip waiting for manual updates
+- Fixed page.tsx: Prevented state flicker during session check by trusting cached auth
+- Fixed error.tsx: Added auto-recovery from transient errors (JSON parse, HTML response, network)
+- Fixed global-error.tsx: Added auto-recovery for transient errors
+- Updated proxy.ts: Added proper rate limiting, health/init skip
+- Removed conflicting middleware.ts (Next.js 16 only allows proxy.ts)
+- Fixed store checkSession: Uses safeJsonParse, doesn't clear auth on network errors
+- Added safeResponseJson helper in store: All res.json() calls replaced
+- All 12 non-apiHandler API routes wrapped with apiHandler (via subagents)
+- Lint passes with zero errors
+- Dev server returning 200 for all routes, no 404s
+
+Stage Summary:
+- BLANK UI ISSUE FIXED: PWA no longer auto-reloads page (was the primary cause)
+- Service worker waits for user confirmation before activating updates
+- Error boundaries auto-recover from transient server errors
+- All API routes now use apiHandler (guarantees JSON responses, never HTML)
+- All res.json() calls in store use safeResponseJson (prevents HTML parse crashes)
+- Session check preserves cached auth on network errors (no UI flicker)
+- Rate limiting active via proxy.ts middleware
+
+---
 Task ID: 1
 Agent: Main Agent
 Task: Production-ready audit and fix of entire MatkaKing project
@@ -39,3 +73,105 @@ Stage Summary:
 - Security headers (X-Content-Type-Options, X-Frame-Options, etc.) on all API responses
 - 7 new database indexes for scalability
 - Timing-safe token comparison prevents timing attacks
+
+---
+Task ID: 10
+Agent: Fix Non-Auth API Routes
+Task: Wrap 4 non-auth API routes with apiHandler
+
+Work Log:
+- Fixed `/src/app/api/games/results/route.ts`:
+  - Wrapped GET handler with `apiHandler` (no rate limit, public endpoint)
+  - Replaced `NextResponse.json({ success: true, data })` → `apiSuccess(data)`
+  - Replaced `NextResponse.json({ success: false, error }, { status })` → `apiError(error, status)`
+  - Removed outer try/catch (apiHandler handles errors)
+  - Kept all business logic, DB calls, and cache logic unchanged
+- Fixed `/src/app/api/init/route.ts`:
+  - Wrapped GET handler with `apiHandler`
+  - Replaced success response with `apiSuccess({ timestamp })`
+  - Fixed error response: changed `message` key → `error` key for consistency
+  - Removed outer try/catch (apiHandler handles errors safely)
+- Fixed `/src/app/api/health/route.ts`:
+  - Wrapped GET handler with `apiHandler`
+  - Replaced success response with `apiSuccess({ status, database, timestamp })`
+  - Removed error path that leaked `error.message` in production (apiHandler safely masks this)
+  - Removed outer try/catch
+- Fixed `/src/app/api/route.ts` (root API):
+  - Wrapped simple one-liner GET handler with `apiHandler` for consistency
+  - Replaced `NextResponse.json({ message })` with `apiSuccess({ message })`
+- Ran `bun run lint` — passed with zero errors
+- Dev server running clean, no runtime errors in logs
+
+Stage Summary:
+- All 4 non-auth API routes now use `apiHandler` wrapper for consistent error handling
+- Error responses use `error` key consistently (fixed `message` → `error` in init route)
+- Production error message leaking prevented in health route (apiHandler masks in prod)
+- Security headers and CORS support now applied to all 4 routes via apiHandler
+- Structured logging now active on all 4 routes via apiHandler
+
+---
+Task ID: 9
+Agent: Fix Auth API Routes
+Task: Wrap 8 auth-protected API routes with apiHandler
+
+Work Log:
+- Fixed `/src/app/api/referral/earnings/route.ts`:
+  - Wrapped GET handler with `apiHandler` + RATE_LIMITS.GENERAL + rateLimitSuffix 'referralEarnings'
+  - Replaced `NextResponse.json({ success: true, data })` → `apiSuccess(data)`
+  - Replaced `NextResponse.json({ success: false, error }, { status })` → `apiError(error, status)`
+  - Removed outer try/catch and manual statusCode check (apiHandler handles AuthError automatically)
+  - Removed unused `NextResponse` import
+- Fixed `/src/app/api/bank-detail/route.ts`:
+  - Wrapped GET handler with `apiHandler` + RATE_LIMITS.GENERAL + rateLimitSuffix 'bankDetailGet'
+  - Wrapped PUT handler with `apiHandler` + RATE_LIMITS.GENERAL + rateLimitSuffix 'bankDetailPut'
+  - Replaced all success/error NextResponse calls with apiSuccess/apiError
+  - Removed outer try/catch blocks and manual statusCode checks
+  - Removed unused `NextResponse` import
+- Fixed `/src/app/api/tickets/route.ts`:
+  - Wrapped POST handler with `apiHandler` + RATE_LIMITS.GENERAL + rateLimitSuffix 'ticketCreate'
+  - Wrapped GET handler with `apiHandler` + RATE_LIMITS.GENERAL + rateLimitSuffix 'ticketList'
+  - Replaced all success/error NextResponse calls with apiSuccess/apiError
+  - Removed outer try/catch blocks and manual statusCode checks
+  - Removed unused `NextResponse` import
+- Fixed `/src/app/api/tickets/[id]/replies/route.ts`:
+  - Wrapped GET handler with `apiHandler` + RATE_LIMITS.GENERAL + rateLimitSuffix 'ticketRepliesGet'
+  - Wrapped POST handler with `apiHandler` + RATE_LIMITS.GENERAL + rateLimitSuffix 'ticketReplyCreate'
+  - Updated handler signatures to use `context` parameter from apiHandler for params access
+  - Replaced all success/error NextResponse calls with apiSuccess/apiError
+  - Removed outer try/catch blocks and manual statusCode checks
+  - Removed unused `NextResponse` import
+- Fixed `/src/app/api/notifications/route.ts`:
+  - Wrapped GET handler with `apiHandler` + RATE_LIMITS.GENERAL + rateLimitSuffix 'notificationsGet'
+  - Wrapped PUT handler with `apiHandler` + RATE_LIMITS.GENERAL + rateLimitSuffix 'notificationsPut'
+  - Replaced all success/error NextResponse calls with apiSuccess/apiError
+  - Removed outer try/catch blocks and manual statusCode checks
+  - Removed unused `NextResponse` import
+- Fixed `/src/app/api/notifications/read/route.ts`:
+  - Wrapped PUT handler with `apiHandler` + RATE_LIMITS.GENERAL + rateLimitSuffix 'notificationsReadPut'
+  - Replaced all success/error NextResponse calls with apiSuccess/apiError
+  - Removed outer try/catch block and manual statusCode check
+  - Removed unused `NextResponse` import
+- Fixed `/src/app/api/admin/bids/summary/route.ts`:
+  - Wrapped GET handler with `apiHandler` + RATE_LIMITS.ADMIN_GENERAL + rateLimitSuffix 'adminBidsSummary'
+  - Replaced all success/error NextResponse calls with apiSuccess/apiError
+  - Kept `requireAdmin(request)` inside handler (apiHandler catches AuthError automatically)
+  - Removed outer try/catch block and manual statusCode check
+  - Removed unused `NextResponse` import
+- Fixed `/src/app/api/admin/bids/export/route.ts`:
+  - Wrapped GET handler with `apiHandler` + RATE_LIMITS.ADMIN_GENERAL + rateLimitSuffix 'adminBidsExport'
+  - Replaced error NextResponse calls with apiError
+  - Kept `requireAdmin(request)` inside handler
+  - Kept `NextResponse` import (still needed for binary file responses - xlsx/csv downloads)
+  - Removed outer try/catch block and manual statusCode check
+- Ran `bun run lint` — passed with zero errors
+- Dev server running clean, no compilation errors
+
+Stage Summary:
+- All 8 auth-protected API routes now use `apiHandler` wrapper for consistent error handling
+- Duplicated try/catch + manual statusCode check code removed from all 8 files
+- All routes use RATE_LIMITS.GENERAL (user routes) or RATE_LIMITS.ADMIN_GENERAL (admin routes)
+- Each route has a unique rateLimitSuffix for granular rate limit tracking
+- Business logic preserved 100% — no functional changes
+- Response shape unchanged: `{ success: true, data }` or `{ success: false, error }`
+- Security headers, CORS, and structured logging now applied via apiHandler on all routes
+- AuthError (statusCode check) now handled automatically by apiHandler's catch block

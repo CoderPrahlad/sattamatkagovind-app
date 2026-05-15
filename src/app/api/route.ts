@@ -1,5 +1,5 @@
-import { NextResponse } from "next/server";
+import { apiHandler, apiSuccess } from '@/lib/api-utils';
 
-export async function GET() {
-  return NextResponse.json({ message: "Hello, world!" });
-}
+export const GET = apiHandler(async () => {
+  return apiSuccess({ message: 'Hello, world!' });
+});
