@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <rect width="32" height="32" rx="6" fill="#059669"/>
+  <rect x="1" y="1" width="30" height="30" rx="5" fill="none" stroke="#04785d" stroke-width="1"/>
+  <polygon points="16,4 19,8 16,12 13,8" fill="#FFD700"/>
+  <polygon points="16,4 17.5,6 16,8 14.5,6" fill="#FFF096"/>
+  <text x="16" y="23" text-anchor="middle" font-family="Arial,sans-serif" font-weight="bold" font-size="12" fill="white">MK</text>
+</svg>
