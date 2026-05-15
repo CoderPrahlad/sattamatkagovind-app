@@ -3,6 +3,8 @@ import type { NextRequest } from 'next/server';
 
 // ── In-memory rate limiter for API routes ──
 // For 10K users, this prevents abuse on auth and financial endpoints
+// NOTE: setInterval removed to prevent memory leaks in edge runtime.
+// Cleanup happens lazily on each request instead.
 
 interface RateLimitEntry {
   count: number;
@@ -11,14 +13,13 @@ interface RateLimitEntry {
 
 const rateLimits = new Map<string, RateLimitEntry>();
 
-// Clean up expired entries every 60 seconds to prevent memory leak
-if (typeof setInterval !== 'undefined') {
-  setInterval(() => {
-    const now = Date.now();
-    for (const [key, val] of rateLimits.entries()) {
-      if (val.resetAt < now) rateLimits.delete(key);
-    }
-  }, 60000);
+// Lazy cleanup: remove expired entries when map grows too large
+const MAX_RATE_LIMIT_ENTRIES = 10000;
+function cleanupExpiredEntries() {
+  const now = Date.now();
+  for (const [key, val] of rateLimits.entries()) {
+    if (val.resetAt < now) rateLimits.delete(key);
+  }
 }
 
 // Rate limit configurations per route pattern
@@ -62,7 +63,7 @@ function getClientId(request: NextRequest): string {
   return request.headers.get('x-real-ip') || 'unknown';
 }
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Only rate-limit API routes
@@ -73,6 +74,11 @@ export function middleware(request: NextRequest) {
   // Skip rate limiting for GET requests on non-sensitive endpoints
   if (request.method === 'GET' && !pathname.startsWith('/api/auth/')) {
     return NextResponse.next();
+  }
+
+  // Lazy cleanup when map gets too large
+  if (rateLimits.size > MAX_RATE_LIMIT_ENTRIES) {
+    cleanupExpiredEntries();
   }
 
   const config = getRateLimitConfig(pathname);
