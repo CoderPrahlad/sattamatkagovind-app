@@ -61,6 +61,7 @@ function RegisterPageInner() {
         body: JSON.stringify({ mobile, purpose: 'register' }),
         timeout: 15000,
         retries: 0,
+        noRetryStatuses: [],
       });
       const json = await res.json();
       if (json.success) {
@@ -92,6 +93,7 @@ function RegisterPageInner() {
         body: JSON.stringify({ name, mobile, password, referralCode: referralCode || undefined, otp }),
         timeout: 15000,
         retries: 0,
+        noRetryStatuses: [],
       });
       const json = await res.json();
       if (json.success) {
@@ -135,6 +137,7 @@ function RegisterPageInner() {
         body: JSON.stringify({ mobile, purpose: 'register' }),
         timeout: 15000,
         retries: 0,
+        noRetryStatuses: [],
       });
       const json = await res.json();
       if (json.success) {

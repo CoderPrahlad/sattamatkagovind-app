@@ -524,6 +524,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         timeout: 10000,
         retries: 1,
         retryDelay: 500,
+        noRetryStatuses: [],
       });
       const json = await res.json();
       if (!json.success) {
@@ -558,6 +559,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         timeout: 15000,
         retries: 2,
         retryDelay: 800,
+        noRetryStatuses: [],
       });
       const json = await res.json();
       if (!json.success) {

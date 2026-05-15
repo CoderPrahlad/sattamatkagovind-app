@@ -7,6 +7,7 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const { mobile, otp, newPassword, step } = body;
+    console.log('[ForgotPassword] Request:', { mobile, step, hasOtp: !!otp, hasNewPassword: !!newPassword });
     // step 1: verify OTP only
     // step 2: reset password (after OTP verified)
 
@@ -41,15 +42,19 @@ export async function POST(request: Request) {
       }
 
       if (!otpEntry) {
+        console.log('[ForgotPassword] No OTP found for mobile:', mobile);
         return NextResponse.json(
           { success: false, error: 'No OTP found. Please request a new OTP.' },
           { status: 400 }
         );
       }
 
+      console.log('[ForgotPassword] OTP entry found, verifying...');
+
       // Verify OTP using attempt tracking
       const result = verifyOTPAttempt(mobile, otp, otpEntry.otp, otpEntry.expiresAt);
       if (!result.valid) {
+        console.log('[ForgotPassword] OTP verification failed:', result.error);
         // If too many failed attempts, delete the OTP entry
         if (result.error?.includes('Too many failed attempts')) {
           try { await db.otpEntry.delete({ where: { id: otpEntry.id } }); } catch {}

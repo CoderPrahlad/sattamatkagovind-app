@@ -6,6 +6,7 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const { mobile, purpose } = body; // purpose: 'login' | 'forgot-password' | 'register'
+    console.log('[SendOTP] Request:', { mobile, purpose });
 
     if (!mobile) {
       return NextResponse.json(

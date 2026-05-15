@@ -6,6 +6,7 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const { mobile, password } = body;
+    console.log('[Login] Request received:', { mobile, hasPassword: !!password });
 
     if (!mobile || !password) {
       return NextResponse.json(
@@ -31,7 +32,7 @@ export async function POST(request: Request) {
     if (!user) {
       return NextResponse.json(
         { success: false, error: 'Invalid mobile or password' },
-        { status: 401 }
+        { status: 400 }
       );
     }
 
@@ -39,7 +40,7 @@ export async function POST(request: Request) {
     if (!user.isActive) {
       return NextResponse.json(
         { success: false, error: 'Account is deactivated. Contact support.' },
-        { status: 403 }
+        { status: 400 }
       );
     }
 
@@ -48,7 +49,7 @@ export async function POST(request: Request) {
     if (!passwordValid) {
       return NextResponse.json(
         { success: false, error: 'Invalid mobile or password' },
-        { status: 401 }
+        { status: 400 }
       );
     }
 

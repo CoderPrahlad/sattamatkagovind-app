@@ -8,6 +8,7 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const { name, mobile, password, referralCode: referralCodeInput, otp } = body;
+    console.log('[Register] Request received:', { name, mobile, hasPassword: !!password, hasOtp: !!otp, referralCode: referralCodeInput });
 
     // Validate required fields
     if (!name || !mobile || !password) {
@@ -57,15 +58,19 @@ export async function POST(request: Request) {
     }
 
     if (!otpEntry) {
+      console.log('[Register] No OTP found for mobile:', mobile);
       return NextResponse.json(
         { success: false, error: 'No OTP found. Please request a new OTP.' },
         { status: 400 }
       );
     }
 
+    console.log('[Register] OTP entry found:', { id: otpEntry.id, storedOtp: otpEntry.otp, enteredOtp: otp, expiresAt: otpEntry.expiresAt, verified: otpEntry.verified });
+
     // Verify OTP using attempt tracking
     const otpResult = verifyOTPAttempt(mobile, otp, otpEntry.otp, otpEntry.expiresAt);
     if (!otpResult.valid) {
+      console.log('[Register] OTP verification failed:', otpResult.error);
       // If too many failed attempts, delete the OTP entry
       if (otpResult.error?.includes('Too many failed attempts')) {
         try { await db.otpEntry.delete({ where: { id: otpEntry.id } }); } catch {}
@@ -91,9 +96,10 @@ export async function POST(request: Request) {
     );
 
     if (existingUser) {
+      console.log('[Register] Mobile already registered:', mobile);
       return NextResponse.json(
         { success: false, error: 'Mobile number already registered' },
-        { status: 409 }
+        { status: 400 }
       );
     }
 
@@ -110,6 +116,7 @@ export async function POST(request: Request) {
     }
 
     // Create user
+    console.log('[Register] Creating user for mobile:', mobile);
     const hashedPassword = await hashPassword(password);
     const user = await withRetry(
       () => db.user.create({
@@ -124,6 +131,7 @@ export async function POST(request: Request) {
       }),
       { context: 'Register: createUser' }
     );
+    console.log('[Register] User created successfully:', user.id);
 
     // Clear OTP after successful registration
     try {
@@ -142,9 +150,10 @@ export async function POST(request: Request) {
       message: 'Registration successful',
     });
   } catch (error: unknown) {
-    console.error('Registration error:', error);
+    console.error('[Register] Registration error:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Failed to register';
     return NextResponse.json(
-      { success: false, error: 'Failed to register' },
+      { success: false, error: errorMessage },
       { status: 500 }
     );
   }

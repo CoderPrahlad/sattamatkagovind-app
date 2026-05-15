@@ -107,7 +107,7 @@ export async function requireAdmin(request: Request): Promise<{ userId: string; 
 // New: bcrypt (cost factor 12) — slow, GPU-resistant
 // Old formats supported for backward compatibility during migration
 
-const BCRYPT_ROUNDS = 12;
+const BCRYPT_ROUNDS = 10;
 
 export async function hashPassword(password: string): Promise<string> {
   const hash = await bcrypt.hash(password, BCRYPT_ROUNDS);

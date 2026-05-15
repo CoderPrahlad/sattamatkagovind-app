@@ -51,6 +51,7 @@ export default function ForgotPasswordPage() {
         body: JSON.stringify({ mobile, purpose: 'forgot-password' }),
         timeout: 15000,
         retries: 0,
+        noRetryStatuses: [],
       });
       const json = await res.json();
       if (json.success) {
@@ -81,6 +82,7 @@ export default function ForgotPasswordPage() {
         body: JSON.stringify({ mobile, otp, step: 'verify-otp' }),
         timeout: 10000,
         retries: 0,
+        noRetryStatuses: [],
       });
       const json = await res.json();
       if (json.success) {
@@ -114,6 +116,7 @@ export default function ForgotPasswordPage() {
         body: JSON.stringify({ mobile, newPassword, step: 'reset-password' }),
         timeout: 10000,
         retries: 0,
+        noRetryStatuses: [],
       });
       const json = await res.json();
       if (json.success) {
