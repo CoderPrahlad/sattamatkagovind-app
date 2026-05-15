@@ -24,3 +24,25 @@ Stage Summary:
 - Page loads correctly through Caddy gateway (28921 bytes HTML)
 - All JavaScript chunks (page.js: 310KB, LoginPage: 2MB) are being served correctly
 - Email and SMS API configurations were NOT modified (preserved as requested)
+
+---
+Task ID: 2
+Agent: Main
+Task: Add SMS OTP API credentials back to .env file
+
+Work Log:
+- User reported OTPs not being received and SMS curl was removed
+- Investigated the OTP system in src/lib/otp.ts - code was correct but env vars were missing
+- Found .env file only had DATABASE_URL and AUTH_SECRET
+- Added START_MSG_API_KEY and START_MSG_TEMPLATE_ID to .env file from user's curl command
+- Tested OTP sending with curl - first got "No account found" (correct for login purpose)
+- Tested with register purpose - got success response
+- Dev server log confirmed: [OTP] SMS OTP sent to 9650130127
+- Email API configuration (email.ts) was NOT modified
+
+Stage Summary:
+- SMS OTP API is now working: credentials added to .env
+  - START_MSG_API_KEY=sm_live_f69892883c5324434cb2e7a5492d2614f1ace294
+  - START_MSG_TEMPLATE_ID=0afbdeb0-785d-4dd0-bd48-365a182df276
+- OTPs are being sent successfully via Start Messaging API
+- Email API config preserved as-is (no changes)
