@@ -1,20 +1,27 @@
 import { Resend } from 'resend';
 
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL || '';
 const SITE_NAME = 'MatkaKing';
+
+// Dynamic admin email (reads from env at call time for hot-reload support)
+function getAdminEmail(): string {
+  return process.env.ADMIN_EMAIL || 'gouravkumar10769@gmail.com';
+}
 
 // Check if email is configured
 function isEmailConfigured(): boolean {
   return !!(process.env.RESEND_API_KEY && process.env.ADMIN_EMAIL);
 }
 
-// Lazy-initialized Resend client (only created when API key exists)
+// Lazy-initialized Resend client (re-created if API key changes)
 let _resend: Resend | null = null;
+let _resendKey: string | undefined;
 function getResend(): Resend | null {
-  if (_resend) return _resend;
-  if (process.env.RESEND_API_KEY) {
-    _resend = new Resend(process.env.RESEND_API_KEY);
-  }
+  const key = process.env.RESEND_API_KEY;
+  if (!key) return null;
+  // Re-create client if API key changed (e.g., after env hot-reload)
+  if (_resend && _resendKey === key) return _resend;
+  _resend = new Resend(key);
+  _resendKey = key;
   return _resend;
 }
 
@@ -51,7 +58,7 @@ export async function sendAdminLoginAlert(data: {
     if (!client) return;
     await client.emails.send({
       from: `MatkaKing Security <onboarding@resend.dev>`,
-      to: [ADMIN_EMAIL],
+      to: [getAdminEmail()],
       subject: `🔐 Admin Login Alert - ${data.adminName} (${data.adminMobile})`,
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto; background: #0a0a0a; color: #e5e7eb; border-radius: 12px; overflow: hidden; border: 1px solid #1f2937;">
@@ -234,7 +241,7 @@ export async function sendRechargeAlert(data: {
     if (!client) return;
     await client.emails.send({
       from: `MatkaKing Alerts <onboarding@resend.dev>`,
-      to: [ADMIN_EMAIL],
+      to: [getAdminEmail()],
       subject: `💰 New Recharge Request - ₹${data.amount} from ${data.userName}`,
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto; background: #0a0a0a; color: #e5e7eb; border-radius: 12px; overflow: hidden; border: 1px solid #1f2937;">
@@ -297,7 +304,7 @@ export async function sendWithdrawalAlert(data: {
     if (!client) return;
     await client.emails.send({
       from: `MatkaKing Alerts <onboarding@resend.dev>`,
-      to: [ADMIN_EMAIL],
+      to: [getAdminEmail()],
       subject: `💸 New Withdrawal Request - ₹${Math.abs(data.amount)} from ${data.userName}`,
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto; background: #0a0a0a; color: #e5e7eb; border-radius: 12px; overflow: hidden; border: 1px solid #1f2937;">

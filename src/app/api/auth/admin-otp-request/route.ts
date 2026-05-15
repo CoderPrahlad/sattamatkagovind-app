@@ -3,8 +3,6 @@ import { db, withRetry } from '@/lib/db';
 import { verifyPassword } from '@/lib/auth';
 import { sendAdminOTP, storeOTP } from '@/lib/email';
 
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'gouravkumar10769@gmail.com';
-
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -62,13 +60,16 @@ export async function POST(request: Request) {
     // Generate 6-digit OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
-    // Store OTP in memory
+    // Store OTP in database
     storeOTP(mobile, otp);
+
+    // Get admin email from env (with fallback)
+    const adminEmail = process.env.ADMIN_EMAIL || 'gouravkumar10769@gmail.com';
 
     // Send OTP email (fire-and-forget with catch to prevent unhandled rejection / 502)
     sendAdminOTP({
       adminName: user.name,
-      email: ADMIN_EMAIL,
+      email: adminEmail,
       otp,
     }).catch(() => {});
 
