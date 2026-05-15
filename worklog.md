@@ -80,3 +80,39 @@ Stage Summary:
 - Registration and forgot-password now show proper error messages (e.g., "Invalid OTP", "No OTP found")
 - No more generic "Invalid credentials" error for OTP validation failures
 - Email and SMS API configurations were NOT modified
+
+---
+Task ID: 4
+Agent: Main
+Task: Fix OTP verification failure - migrate from in-memory to database storage
+
+Work Log:
+- User reported "Registration Failed" / "No OTP found" error when entering OTP during registration and forgot-password
+- Root cause: OTP was stored in an in-memory Map (userOtpStore) which gets CLEARED when Next.js dev server hot-reloads
+- When any code change triggers hot module replacement, the in-memory store is re-initialized to empty
+- By the time user enters the OTP (after receiving SMS), the store has been wiped
+
+Fix: Migrated OTP storage from in-memory Maps to SQLite database (Prisma)
+1. Added OtpEntry model to prisma/schema.prisma with fields: id, mobile, otp, purpose, verified, expiresAt, createdAt
+2. Ran `bun run db:push` to create the table
+3. Refactored src/lib/otp.ts to be lightweight (no db import):
+   - Now exports: generateOTP, checkRateLimit, markRateLimit, clearRateLimit, sendSMSOTPWithCode, verifyOTPAttempt, isLockedOut
+   - Rate limiting and attempt tracking remain in-memory (acceptable to lose on restart)
+4. Updated API routes to handle database operations directly:
+   - send-otp/route.ts: Stores OTP in db.otpEntry, then sends SMS
+   - register/route.ts: Reads OTP from db.otpEntry, verifies via verifyOTPAttempt()
+   - forgot-password/route.ts: Reads/verifies OTP from db.otpEntry
+   - verify-otp-login/route.ts: Same pattern
+5. Updated email.ts for admin OTP: Uses dynamic import of db for storeOTP/verifyOTP
+6. All API routes use status 400 (not 401/403/404) for validation errors
+
+Testing:
+- POST /api/auth/send-otp → 200 + "OTP sent to your mobile number via SMS"
+- Database verification: OTP entries stored correctly in OtpEntry table
+- SMS delivery confirmed: [OTP] SMS OTP sent to 9650130127
+- Lint check passes clean
+
+Stage Summary:
+- OTP storage is now database-backed (SQLite) - survives hot reloads and server restarts
+- Registration and forgot-password flows will work correctly even after server restarts
+- SMS API (Start Messaging) and Email API (Resend) configurations NOT modified

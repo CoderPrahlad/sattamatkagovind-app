@@ -55,54 +55,30 @@ export async function sendAdminLoginAlert(data: {
       subject: `🔐 Admin Login Alert - ${data.adminName} (${data.adminMobile})`,
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto; background: #0a0a0a; color: #e5e7eb; border-radius: 12px; overflow: hidden; border: 1px solid #1f2937;">
-          <!-- Header -->
           <div style="background: linear-gradient(135deg, #dc2626, #b91c1c); padding: 20px; text-align: center;">
             <h1 style="margin: 0; color: white; font-size: 22px;">🔐 Admin Login Detected</h1>
             <p style="margin: 5px 0 0; color: #fecaca; font-size: 13px;">${SITE_NAME} - Security Alert</p>
           </div>
-
-          <!-- Warning Banner -->
           <div style="padding: 20px 20px 0;">
             <div style="background: #7f1d1d; border: 1px solid #dc2626; border-radius: 8px; padding: 14px; text-align: center;">
               <p style="margin: 0; color: #fca5a5; font-size: 13px; font-weight: 600;">⚠️ If this was not you, your admin credentials may be compromised!</p>
             </div>
           </div>
-
-          <!-- Details -->
           <div style="padding: 20px;">
             <div style="background: #111827; border-radius: 8px; padding: 16px;">
               <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
-                <tr>
-                  <td style="padding: 10px 0; color: #9ca3af; width: 40%;">👤 Admin Name</td>
-                  <td style="padding: 10px 0; color: #f3f4f6; font-weight: 600;">${data.adminName}</td>
-                </tr>
-                <tr style="border-top: 1px solid #1f2937;">
-                  <td style="padding: 10px 0; color: #9ca3af;">📱 Mobile</td>
-                  <td style="padding: 10px 0; color: #f3f4f6; font-weight: 600;">${data.adminMobile}</td>
-                </tr>
-                <tr style="border-top: 1px solid #1f2937;">
-                  <td style="padding: 10px 0; color: #9ca3af;">🕐 Login Time</td>
-                  <td style="padding: 10px 0; color: #fbbf24; font-weight: 600;">${data.loginTime}</td>
-                </tr>
-                <tr style="border-top: 1px solid #1f2937;">
-                  <td style="padding: 10px 0; color: #9ca3af;">⏱️ Session Validity</td>
-                  <td style="padding: 10px 0; color: #34d399; font-weight: 600;">2 Hours</td>
-                </tr>
+                <tr><td style="padding: 10px 0; color: #9ca3af; width: 40%;">👤 Admin Name</td><td style="padding: 10px 0; color: #f3f4f6; font-weight: 600;">${data.adminName}</td></tr>
+                <tr style="border-top: 1px solid #1f2937;"><td style="padding: 10px 0; color: #9ca3af;">📱 Mobile</td><td style="padding: 10px 0; color: #f3f4f6; font-weight: 600;">${data.adminMobile}</td></tr>
+                <tr style="border-top: 1px solid #1f2937;"><td style="padding: 10px 0; color: #9ca3af;">🕐 Login Time</td><td style="padding: 10px 0; color: #fbbf24; font-weight: 600;">${data.loginTime}</td></tr>
+                <tr style="border-top: 1px solid #1f2937;"><td style="padding: 10px 0; color: #9ca3af;">⏱️ Session Validity</td><td style="padding: 10px 0; color: #34d399; font-weight: 600;">2 Hours</td></tr>
               </table>
             </div>
           </div>
-
-          <!-- Info -->
           <div style="padding: 0 20px 20px;">
             <div style="background: #111827; border-radius: 8px; padding: 14px;">
-              <p style="margin: 0; color: #9ca3af; font-size: 12px; line-height: 1.6;">
-                This is an automated security notification. Your admin session is valid for <strong style="color: #34d399;">2 hours</strong>. 
-                After that, you will need to log in again.
-              </p>
+              <p style="margin: 0; color: #9ca3af; font-size: 12px; line-height: 1.6;">This is an automated security notification. Your admin session is valid for <strong style="color: #34d399;">2 hours</strong>. After that, you will need to log in again.</p>
             </div>
           </div>
-
-          <!-- Footer -->
           <div style="background: #111827; padding: 12px; text-align: center; border-top: 1px solid #1f2937;">
             <p style="margin: 0; color: #6b7280; font-size: 11px;">This is an automated security alert from ${SITE_NAME}</p>
           </div>
@@ -115,25 +91,17 @@ export async function sendAdminLoginAlert(data: {
   }
 }
 
-// In-memory OTP store (with TTL)
-const otpStore = new Map<string, { otp: string; expiresAt: number; mobile: string }>();
+// OTP attempt tracking for admin (in-memory)
+const otpAttempts = new Map<string, { count: number; lockedUntil: number }>();
 
-// ── Periodic cleanup of expired OTP entries (prevents memory leak under 10K users) ──
+// Cleanup
 if (typeof setInterval !== 'undefined') {
   setInterval(() => {
     const now = Date.now();
-    for (const [key, val] of otpStore.entries()) {
-      if (val.expiresAt < now) otpStore.delete(key);
-    }
     for (const [key, val] of otpAttempts.entries()) {
       if (val.lockedUntil > 0 && val.lockedUntil < now) otpAttempts.delete(key);
     }
-  }, 60000); // Clean up every minute
-}
-
-// Generate a 6-digit OTP
-function generateOTP(): string {
-  return Math.floor(100000 + Math.random() * 900000).toString();
+  }, 60000);
 }
 
 // Send admin OTP email
@@ -185,16 +153,24 @@ export async function sendAdminOTP(data: {
   }
 }
 
-// Store OTP in memory
-export function storeOTP(mobile: string, otp: string): void {
-  const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes
-  otpStore.set(mobile, { otp, expiresAt, mobile });
+// Store admin OTP in database
+export async function storeOTP(mobile: string, otp: string): Promise<void> {
+  const { db } = await import('@/lib/db');
+  const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+  try {
+    await db.otpEntry.deleteMany({ where: { mobile, purpose: 'admin-email' } });
+    await db.otpEntry.create({
+      data: { mobile, otp, purpose: 'admin-email', verified: false, expiresAt },
+    });
+  } catch (error) {
+    console.error('[Email] Failed to store OTP:', error);
+  }
 }
 
-const otpAttempts = new Map<string, { count: number; lockedUntil: number }>();
+// Verify admin OTP with attempt limiting
+export async function verifyOTP(mobile: string, otp: string): Promise<boolean> {
+  const { db } = await import('@/lib/db');
 
-// Verify OTP with attempt limiting
-export function verifyOTP(mobile: string, otp: string): boolean {
   // Check if locked out
   const attempts = otpAttempts.get(mobile);
   if (attempts) {
@@ -206,17 +182,24 @@ export function verifyOTP(mobile: string, otp: string): boolean {
     }
   }
 
-  const entry = otpStore.get(mobile);
+  // Look up OTP in database
+  let entry;
+  try {
+    entry = await db.otpEntry.findFirst({ where: { mobile, purpose: 'admin-email' }, orderBy: { createdAt: 'desc' } });
+  } catch {
+    return false;
+  }
+
   if (!entry) return false;
-  if (Date.now() > entry.expiresAt) {
-    otpStore.delete(mobile);
+  if (new Date() > entry.expiresAt) {
+    try { await db.otpEntry.delete({ where: { id: entry.id } }); } catch {}
     otpAttempts.delete(mobile);
     return false;
   }
 
   if (entry.otp === otp) {
     otpAttempts.delete(mobile);
-    otpStore.delete(mobile);
+    try { await db.otpEntry.delete({ where: { id: entry.id } }); } catch {}
     return true;
   }
 
@@ -255,54 +238,29 @@ export async function sendRechargeAlert(data: {
       subject: `💰 New Recharge Request - ₹${data.amount} from ${data.userName}`,
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto; background: #0a0a0a; color: #e5e7eb; border-radius: 12px; overflow: hidden; border: 1px solid #1f2937;">
-          <!-- Header -->
           <div style="background: linear-gradient(135deg, #059669, #047857); padding: 20px; text-align: center;">
             <h1 style="margin: 0; color: white; font-size: 22px;">💰 New Recharge Request</h1>
             <p style="margin: 5px 0 0; color: #d1fae5; font-size: 13px;">${SITE_NAME} - Deposit Alert</p>
           </div>
-
-          <!-- Amount -->
           <div style="text-align: center; padding: 20px;">
             <p style="margin: 0; color: #9ca3af; font-size: 12px; text-transform: uppercase; letter-spacing: 1px;">Amount</p>
             <p style="margin: 5px 0 0; color: #34d399; font-size: 36px; font-weight: bold;">₹${data.amount.toLocaleString('en-IN')}</p>
           </div>
-
-          <!-- Details -->
           <div style="padding: 0 20px 20px;">
-            <div style="background: #111827; border-radius: 8px; padding: 16px; space-y: 10px;">
+            <div style="background: #111827; border-radius: 8px; padding: 16px;">
               <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
-                <tr>
-                  <td style="padding: 8px 0; color: #9ca3af; width: 40%;">👤 User Name</td>
-                  <td style="padding: 8px 0; color: #f3f4f6; font-weight: 600;">${data.userName}</td>
-                </tr>
-                <tr style="border-top: 1px solid #1f2937;">
-                  <td style="padding: 8px 0; color: #9ca3af;">📱 Mobile</td>
-                  <td style="padding: 8px 0; color: #f3f4f6; font-weight: 600;">${data.userMobile}</td>
-                </tr>
-                <tr style="border-top: 1px solid #1f2937;">
-                  <td style="padding: 8px 0; color: #9ca3af;">💳 UPI Number</td>
-                  <td style="padding: 8px 0; color: #f3f4f6; font-weight: 600;">${data.upiNumber}</td>
-                </tr>
-                ${data.utrNumber ? `
-                <tr style="border-top: 1px solid #1f2937;">
-                  <td style="padding: 8px 0; color: #9ca3af;">🔑 UTR Number</td>
-                  <td style="padding: 8px 0; color: #f3f4f6; font-weight: 600;">${data.utrNumber}</td>
-                </tr>` : ''}
-                <tr style="border-top: 1px solid #1f2937;">
-                  <td style="padding: 8px 0; color: #9ca3af;">🕐 Time</td>
-                  <td style="padding: 8px 0; color: #f3f4f6; font-weight: 600;">${getISTTime()}</td>
-                </tr>
+                <tr><td style="padding: 8px 0; color: #9ca3af; width: 40%;">👤 User Name</td><td style="padding: 8px 0; color: #f3f4f6; font-weight: 600;">${data.userName}</td></tr>
+                <tr style="border-top: 1px solid #1f2937;"><td style="padding: 8px 0; color: #9ca3af;">📱 Mobile</td><td style="padding: 8px 0; color: #f3f4f6; font-weight: 600;">${data.userMobile}</td></tr>
+                <tr style="border-top: 1px solid #1f2937;"><td style="padding: 8px 0; color: #9ca3af;">💳 UPI Number</td><td style="padding: 8px 0; color: #f3f4f6; font-weight: 600;">${data.upiNumber}</td></tr>
+                ${data.utrNumber ? `<tr style="border-top: 1px solid #1f2937;"><td style="padding: 8px 0; color: #9ca3af;">🔑 UTR Number</td><td style="padding: 8px 0; color: #f3f4f6; font-weight: 600;">${data.utrNumber}</td></tr>` : ''}
+                <tr style="border-top: 1px solid #1f2937;"><td style="padding: 8px 0; color: #9ca3af;">🕐 Time</td><td style="padding: 8px 0; color: #f3f4f6; font-weight: 600;">${getISTTime()}</td></tr>
               </table>
             </div>
-
-            <!-- CTA -->
             <div style="text-align: center; margin-top: 20px; padding: 12px; background: #111827; border-radius: 8px;">
               <p style="margin: 0; color: #9ca3af; font-size: 12px;">Login to Admin Panel to approve or reject</p>
               <p style="margin: 5px 0 0; color: #6b7280; font-size: 11px;">Open your ${SITE_NAME} Admin Panel → Wallet section</p>
             </div>
           </div>
-
-          <!-- Footer -->
           <div style="background: #111827; padding: 12px; text-align: center; border-top: 1px solid #1f2937;">
             <p style="margin: 0; color: #6b7280; font-size: 11px;">This is an automated alert from ${SITE_NAME}</p>
           </div>
@@ -343,76 +301,35 @@ export async function sendWithdrawalAlert(data: {
       subject: `💸 New Withdrawal Request - ₹${Math.abs(data.amount)} from ${data.userName}`,
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto; background: #0a0a0a; color: #e5e7eb; border-radius: 12px; overflow: hidden; border: 1px solid #1f2937;">
-          <!-- Header -->
           <div style="background: linear-gradient(135deg, #d97706, #b45309); padding: 20px; text-align: center;">
             <h1 style="margin: 0; color: white; font-size: 22px;">💸 New Withdrawal Request</h1>
             <p style="margin: 5px 0 0; color: #fef3c7; font-size: 13px;">${SITE_NAME} - Withdrawal Alert</p>
           </div>
-
-          <!-- Amount -->
           <div style="text-align: center; padding: 20px;">
             <p style="margin: 0; color: #9ca3af; font-size: 12px; text-transform: uppercase; letter-spacing: 1px;">Amount</p>
             <p style="margin: 5px 0 0; color: #fbbf24; font-size: 36px; font-weight: bold;">₹${Math.abs(data.amount).toLocaleString('en-IN')}</p>
           </div>
-
-          <!-- Details -->
           <div style="padding: 0 20px 20px;">
             <div style="background: #111827; border-radius: 8px; padding: 16px;">
               <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
-                <tr>
-                  <td style="padding: 8px 0; color: #9ca3af; width: 40%;">👤 User Name</td>
-                  <td style="padding: 8px 0; color: #f3f4f6; font-weight: 600;">${data.userName}</td>
-                </tr>
-                <tr style="border-top: 1px solid #1f2937;">
-                  <td style="padding: 8px 0; color: #9ca3af;">📱 Mobile</td>
-                  <td style="padding: 8px 0; color: #f3f4f6; font-weight: 600;">${data.userMobile}</td>
-                </tr>
-                <tr style="border-top: 1px solid #1f2937;">
-                  <td style="padding: 8px 0; color: #9ca3af;">🏦 Method</td>
-                  <td style="padding: 8px 0; color: ${isUPI ? '#38bdf8' : '#fbbf24'}; font-weight: 600;">${isUPI ? '📱 UPI Transfer' : '🏦 Bank Transfer'}</td>
-                </tr>
-                ${isUPI && data.upiId ? `
-                <tr style="border-top: 1px solid #1f2937;">
-                  <td style="padding: 8px 0; color: #9ca3af;">💳 UPI ID</td>
-                  <td style="padding: 8px 0; color: #f3f4f6; font-weight: 600;">${data.upiId}</td>
-                </tr>` : ''}
+                <tr><td style="padding: 8px 0; color: #9ca3af; width: 40%;">👤 User Name</td><td style="padding: 8px 0; color: #f3f4f6; font-weight: 600;">${data.userName}</td></tr>
+                <tr style="border-top: 1px solid #1f2937;"><td style="padding: 8px 0; color: #9ca3af;">📱 Mobile</td><td style="padding: 8px 0; color: #f3f4f6; font-weight: 600;">${data.userMobile}</td></tr>
+                <tr style="border-top: 1px solid #1f2937;"><td style="padding: 8px 0; color: #9ca3af;">🏦 Method</td><td style="padding: 8px 0; color: ${isUPI ? '#38bdf8' : '#fbbf24'}; font-weight: 600;">${isUPI ? '📱 UPI Transfer' : '🏦 Bank Transfer'}</td></tr>
+                ${isUPI && data.upiId ? `<tr style="border-top: 1px solid #1f2937;"><td style="padding: 8px 0; color: #9ca3af;">💳 UPI ID</td><td style="padding: 8px 0; color: #f3f4f6; font-weight: 600;">${data.upiId}</td></tr>` : ''}
                 ${!isUPI ? `
-                ${data.accountHolder ? `
-                <tr style="border-top: 1px solid #1f2937;">
-                  <td style="padding: 8px 0; color: #9ca3af;">👤 Account Holder</td>
-                  <td style="padding: 8px 0; color: #f3f4f6; font-weight: 600;">${data.accountHolder}</td>
-                </tr>` : ''}
-                ${data.bankName ? `
-                <tr style="border-top: 1px solid #1f2937;">
-                  <td style="padding: 8px 0; color: #9ca3af;">🏦 Bank Name</td>
-                  <td style="padding: 8px 0; color: #f3f4f6; font-weight: 600;">${data.bankName}</td>
-                </tr>` : ''}
-                ${data.accountNumber ? `
-                <tr style="border-top: 1px solid #1f2937;">
-                  <td style="padding: 8px 0; color: #9ca3af;">🔢 Account No.</td>
-                  <td style="padding: 8px 0; color: #f3f4f6; font-weight: 600;">${data.accountNumber}</td>
-                </tr>` : ''}
-                ${data.ifscCode ? `
-                <tr style="border-top: 1px solid #1f2937;">
-                  <td style="padding: 8px 0; color: #9ca3af;">🔑 IFSC Code</td>
-                  <td style="padding: 8px 0; color: #f3f4f6; font-weight: 600;">${data.ifscCode}</td>
-                </tr>` : ''}
+                ${data.accountHolder ? `<tr style="border-top: 1px solid #1f2937;"><td style="padding: 8px 0; color: #9ca3af;">👤 Account Holder</td><td style="padding: 8px 0; color: #f3f4f6; font-weight: 600;">${data.accountHolder}</td></tr>` : ''}
+                ${data.bankName ? `<tr style="border-top: 1px solid #1f2937;"><td style="padding: 8px 0; color: #9ca3af;">🏦 Bank Name</td><td style="padding: 8px 0; color: #f3f4f6; font-weight: 600;">${data.bankName}</td></tr>` : ''}
+                ${data.accountNumber ? `<tr style="border-top: 1px solid #1f2937;"><td style="padding: 8px 0; color: #9ca3af;">🔢 Account No.</td><td style="padding: 8px 0; color: #f3f4f6; font-weight: 600;">${data.accountNumber}</td></tr>` : ''}
+                ${data.ifscCode ? `<tr style="border-top: 1px solid #1f2937;"><td style="padding: 8px 0; color: #9ca3af;">🔑 IFSC Code</td><td style="padding: 8px 0; color: #f3f4f6; font-weight: 600;">${data.ifscCode}</td></tr>` : ''}
                 ` : ''}
-                <tr style="border-top: 1px solid #1f2937;">
-                  <td style="padding: 8px 0; color: #9ca3af;">🕐 Time</td>
-                  <td style="padding: 8px 0; color: #f3f4f6; font-weight: 600;">${getISTTime()}</td>
-                </tr>
+                <tr style="border-top: 1px solid #1f2937;"><td style="padding: 8px 0; color: #9ca3af;">🕐 Time</td><td style="padding: 8px 0; color: #f3f4f6; font-weight: 600;">${getISTTime()}</td></tr>
               </table>
             </div>
-
-            <!-- CTA -->
             <div style="text-align: center; margin-top: 20px; padding: 12px; background: #111827; border-radius: 8px;">
               <p style="margin: 0; color: #9ca3af; font-size: 12px;">Login to Admin Panel to approve or reject</p>
               <p style="margin: 5px 0 0; color: #6b7280; font-size: 11px;">Open your ${SITE_NAME} Admin Panel → Wallet section</p>
             </div>
           </div>
-
-          <!-- Footer -->
           <div style="background: #111827; padding: 12px; text-align: center; border-top: 1px solid #1f2937;">
             <p style="margin: 0; color: #6b7280; font-size: 11px;">This is an automated alert from ${SITE_NAME}</p>
           </div>

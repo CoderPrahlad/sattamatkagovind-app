@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { db, withRetry } from '@/lib/db';
-import { sendSMSOTP } from '@/lib/otp';
+import { sendSMSOTPWithCode, generateOTP, checkRateLimit, markRateLimit, clearRateLimit } from '@/lib/otp';
 
 export async function POST(request: Request) {
   try {
@@ -18,6 +18,15 @@ export async function POST(request: Request) {
     if (!/^\d{10,15}$/.test(mobile)) {
       return NextResponse.json(
         { success: false, error: 'Please enter a valid mobile number (10-15 digits)' },
+        { status: 400 }
+      );
+    }
+
+    // Rate limit check
+    const rateCheck = checkRateLimit(mobile);
+    if (!rateCheck.allowed) {
+      return NextResponse.json(
+        { success: false, error: rateCheck.error },
         { status: 400 }
       );
     }
@@ -69,20 +78,48 @@ export async function POST(request: Request) {
       if (existingUser) {
         return NextResponse.json(
           { success: false, error: 'This mobile number is already registered. Please login instead.' },
-          { status: 409 }
+          { status: 400 }
         );
       }
     }
 
+    // Generate OTP
+    const otp = generateOTP();
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+
+    // Store OTP in database (delete any existing OTP for this mobile first)
+    try {
+      await db.otpEntry.deleteMany({ where: { mobile, purpose: 'sms' } });
+      await db.otpEntry.create({
+        data: {
+          mobile,
+          otp,
+          purpose: 'sms',
+          verified: false,
+          expiresAt,
+        },
+      });
+    } catch (dbError) {
+      console.error('[SendOTP] Failed to store OTP in database:', dbError);
+      return NextResponse.json(
+        { success: false, error: 'Failed to generate OTP. Please try again.' },
+        { status: 400 }
+      );
+    }
+
     // Send OTP via SMS
-    const result = await sendSMSOTP(mobile);
+    const result = await sendSMSOTPWithCode(mobile, otp);
 
     if (!result.success) {
+      clearRateLimit(mobile);
       return NextResponse.json(
         { success: false, error: result.error },
         { status: 400 }
       );
     }
+
+    // Set rate limit after successful send
+    markRateLimit(mobile);
 
     return NextResponse.json({
       success: true,

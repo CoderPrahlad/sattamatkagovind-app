@@ -16,11 +16,11 @@ export async function POST(request: Request) {
     }
 
     // Verify OTP
-    const isValid = verifyOTP(mobile, otp);
+    const isValid = await verifyOTP(mobile, otp);
     if (!isValid) {
       return NextResponse.json(
         { success: false, error: 'Invalid or expired OTP' },
-        { status: 401 }
+        { status: 400 }
       );
     }
 
@@ -33,7 +33,7 @@ export async function POST(request: Request) {
     if (!user || user.role !== 'admin') {
       return NextResponse.json(
         { success: false, error: 'Admin account not found' },
-        { status: 403 }
+        { status: 400 }
       );
     }
 

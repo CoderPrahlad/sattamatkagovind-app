@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { db, withRetry } from '@/lib/db';
-import { verifyUserOTP } from '@/lib/otp';
+import { verifyOTPAttempt } from '@/lib/otp';
 import { createAuthToken, excludePassword } from '@/lib/auth';
 
 export async function POST(request: Request) {
@@ -15,12 +15,36 @@ export async function POST(request: Request) {
       );
     }
 
-    // Verify OTP
-    const result = verifyUserOTP(mobile, otp);
+    // Look up OTP from database
+    let otpEntry;
+    try {
+      otpEntry = await db.otpEntry.findFirst({
+        where: { mobile, purpose: 'sms' },
+        orderBy: { createdAt: 'desc' },
+      });
+    } catch {
+      return NextResponse.json(
+        { success: false, error: 'Verification failed. Please try again.' },
+        { status: 400 }
+      );
+    }
+
+    if (!otpEntry) {
+      return NextResponse.json(
+        { success: false, error: 'No OTP found. Please request a new OTP.' },
+        { status: 400 }
+      );
+    }
+
+    // Verify OTP using attempt tracking
+    const result = verifyOTPAttempt(mobile, otp, otpEntry.otp, otpEntry.expiresAt);
     if (!result.valid) {
+      if (result.error?.includes('Too many failed attempts')) {
+        try { await db.otpEntry.delete({ where: { id: otpEntry.id } }); } catch {}
+      }
       return NextResponse.json(
         { success: false, error: result.error },
-        { status: 401 }
+        { status: 400 }
       );
     }
 
@@ -33,16 +57,21 @@ export async function POST(request: Request) {
     if (!user) {
       return NextResponse.json(
         { success: false, error: 'Account not found' },
-        { status: 404 }
+        { status: 400 }
       );
     }
 
     if (!user.isActive) {
       return NextResponse.json(
         { success: false, error: 'Account is deactivated. Contact support.' },
-        { status: 403 }
+        { status: 400 }
       );
     }
+
+    // Clear OTP after successful verification
+    try {
+      await db.otpEntry.deleteMany({ where: { mobile, purpose: 'sms' } });
+    } catch {}
 
     // Create auth token
     const token = createAuthToken(user.id, user.role);

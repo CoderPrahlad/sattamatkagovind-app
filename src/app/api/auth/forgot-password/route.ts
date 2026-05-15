@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { db, withRetry } from '@/lib/db';
 import { hashPassword } from '@/lib/auth';
-import { verifyUserOTP, isOTPVerified, clearOTP } from '@/lib/otp';
+import { verifyOTPAttempt } from '@/lib/otp';
 
 export async function POST(request: Request) {
   try {
@@ -26,13 +26,47 @@ export async function POST(request: Request) {
         );
       }
 
-      const result = verifyUserOTP(mobile, otp);
+      // Look up OTP from database
+      let otpEntry;
+      try {
+        otpEntry = await db.otpEntry.findFirst({
+          where: { mobile, purpose: 'sms' },
+          orderBy: { createdAt: 'desc' },
+        });
+      } catch {
+        return NextResponse.json(
+          { success: false, error: 'Verification failed. Please try again.' },
+          { status: 400 }
+        );
+      }
+
+      if (!otpEntry) {
+        return NextResponse.json(
+          { success: false, error: 'No OTP found. Please request a new OTP.' },
+          { status: 400 }
+        );
+      }
+
+      // Verify OTP using attempt tracking
+      const result = verifyOTPAttempt(mobile, otp, otpEntry.otp, otpEntry.expiresAt);
       if (!result.valid) {
+        // If too many failed attempts, delete the OTP entry
+        if (result.error?.includes('Too many failed attempts')) {
+          try { await db.otpEntry.delete({ where: { id: otpEntry.id } }); } catch {}
+        }
         return NextResponse.json(
           { success: false, error: result.error },
           { status: 400 }
         );
       }
+
+      // Mark OTP as verified in database
+      try {
+        await db.otpEntry.update({
+          where: { id: otpEntry.id },
+          data: { verified: true },
+        });
+      } catch {}
 
       return NextResponse.json({
         success: true,
@@ -56,10 +90,26 @@ export async function POST(request: Request) {
         );
       }
 
-      // Check if OTP was verified
-      if (!isOTPVerified(mobile)) {
+      // Check if OTP was verified (from database)
+      let otpEntry;
+      try {
+        otpEntry = await db.otpEntry.findFirst({
+          where: { mobile, purpose: 'sms' },
+          orderBy: { createdAt: 'desc' },
+        });
+      } catch {}
+
+      if (!otpEntry || !otpEntry.verified) {
         return NextResponse.json(
           { success: false, error: 'Please verify OTP first' },
+          { status: 400 }
+        );
+      }
+
+      // Check expiry
+      if (new Date() > otpEntry.expiresAt) {
+        return NextResponse.json(
+          { success: false, error: 'OTP has expired. Please request a new one.' },
           { status: 400 }
         );
       }
@@ -73,7 +123,7 @@ export async function POST(request: Request) {
       if (!user) {
         return NextResponse.json(
           { success: false, error: 'Account not found' },
-          { status: 404 }
+          { status: 400 }
         );
       }
 
@@ -87,8 +137,10 @@ export async function POST(request: Request) {
         { context: 'ForgotPassword: updatePassword' }
       );
 
-      // Clear OTP
-      clearOTP(mobile);
+      // Clear OTP from database
+      try {
+        await db.otpEntry.deleteMany({ where: { mobile, purpose: 'sms' } });
+      } catch {}
 
       return NextResponse.json({
         success: true,

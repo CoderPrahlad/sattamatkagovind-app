@@ -179,3 +179,15 @@ model TicketReply {
   isAdmin   Boolean  @default(false)
   createdAt DateTime @default(now())
 }
+
+model OtpEntry {
+  id        String   @id @default(cuid())
+  mobile    String   // phone number or identifier
+  otp       String   // the OTP code
+  purpose   String   @default("sms")  // "sms" or "admin-email"
+  verified  Boolean  @default(false)
+  expiresAt DateTime // when the OTP expires
+  createdAt DateTime @default(now())
+
+  @@index([mobile, purpose])
+}

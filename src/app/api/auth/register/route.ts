@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { db, withRetry } from '@/lib/db';
 import { hashPassword, createAuthToken, excludePassword } from '@/lib/auth';
-import { verifyUserOTP, clearOTP } from '@/lib/otp';
+import { verifyOTPAttempt } from '@/lib/otp';
 import crypto from 'crypto';
 
 export async function POST(request: Request) {
@@ -41,14 +41,48 @@ export async function POST(request: Request) {
       );
     }
 
-    // Verify OTP first
-    const otpResult = verifyUserOTP(mobile, otp);
+    // Look up OTP from database
+    let otpEntry;
+    try {
+      otpEntry = await db.otpEntry.findFirst({
+        where: { mobile, purpose: 'sms' },
+        orderBy: { createdAt: 'desc' },
+      });
+    } catch (dbError) {
+      console.error('[Register] Database error looking up OTP:', dbError);
+      return NextResponse.json(
+        { success: false, error: 'Verification failed. Please try again.' },
+        { status: 400 }
+      );
+    }
+
+    if (!otpEntry) {
+      return NextResponse.json(
+        { success: false, error: 'No OTP found. Please request a new OTP.' },
+        { status: 400 }
+      );
+    }
+
+    // Verify OTP using attempt tracking
+    const otpResult = verifyOTPAttempt(mobile, otp, otpEntry.otp, otpEntry.expiresAt);
     if (!otpResult.valid) {
+      // If too many failed attempts, delete the OTP entry
+      if (otpResult.error?.includes('Too many failed attempts')) {
+        try { await db.otpEntry.delete({ where: { id: otpEntry.id } }); } catch {}
+      }
       return NextResponse.json(
         { success: false, error: otpResult.error || 'Invalid OTP. Please verify your mobile number.' },
         { status: 400 }
       );
     }
+
+    // Mark OTP as verified in database
+    try {
+      await db.otpEntry.update({
+        where: { id: otpEntry.id },
+        data: { verified: true },
+      });
+    } catch {}
 
     // Check if mobile already exists (double-check after OTP verification)
     const existingUser = await withRetry(
@@ -92,7 +126,9 @@ export async function POST(request: Request) {
     );
 
     // Clear OTP after successful registration
-    clearOTP(mobile);
+    try {
+      await db.otpEntry.deleteMany({ where: { mobile, purpose: 'sms' } });
+    } catch {}
 
     // Create self-contained auth token
     const token = createAuthToken(user.id, user.role);
