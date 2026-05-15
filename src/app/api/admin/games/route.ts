@@ -1,64 +1,59 @@
-import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { requireAdmin } from '@/lib/auth';
+import { apiHandler, apiSuccess, apiError, parseJsonBody } from '@/lib/api-utils';
+import { RATE_LIMITS } from '@/lib/rate-limit';
+import { sanitizeName, sanitizeText } from '@/lib/sanitizer';
+import { logger } from '@/lib/logger';
+import { cacheGet, cacheSet, cacheDeleteByPrefix, CACHE_TTL } from '@/lib/cache';
 
-export async function GET(request: Request) {
-  try {
-    await requireAdmin(request);
+export const GET = apiHandler(async (request) => {
+  const session = await requireAdmin(request);
 
-    const games = await db.game.findMany({
-      orderBy: { sortOrder: 'asc' },
-      include: {
-        _count: {
-          select: {
-            bids: true,
-            results: true,
-          },
+  // Check cache
+  const cacheKey = 'games:admin_list';
+  const cached = cacheGet<typeof undefined>(cacheKey);
+  if (cached) {
+    logger.debug('AdminGames', 'Cache hit for admin games list');
+    return apiSuccess(cached);
+  }
+
+  const games = await db.game.findMany({
+    orderBy: { sortOrder: 'asc' },
+    include: {
+      _count: {
+        select: {
+          bids: true,
+          results: true,
         },
       },
-    });
+    },
+  });
 
-    return NextResponse.json({
-      success: true,
-      data: games,
-    });
-  } catch (error: unknown) {
-    if (error && typeof error === 'object' && 'statusCode' in error) {
-      const authError = error as { statusCode: number; message: string };
-      return NextResponse.json(
-        { success: false, error: authError.message },
-        { status: authError.statusCode }
-      );
-    }
-    console.error('Admin games fetch error:', error);
-    return NextResponse.json(
-      { success: false, error: 'Failed to fetch games' },
-      { status: 500 }
-    );
+  cacheSet(cacheKey, games, CACHE_TTL.GAMES);
+  logger.info('AdminGames', `Fetched games list by admin ${session.userId}`);
+  return apiSuccess(games);
+}, { rateLimit: RATE_LIMITS.ADMIN_GENERAL });
+
+export const POST = apiHandler(async (request) => {
+  const session = await requireAdmin(request);
+  const { data: body, error: parseError } = await parseJsonBody(request);
+  if (parseError) return parseError;
+
+  const { name, openTime, closeTime, sortOrder } = body as Record<string, unknown>;
+
+  if (!name || !openTime || !closeTime) {
+    return apiError('name, openTime, and closeTime are required');
   }
-}
 
-export async function POST(request: Request) {
-  try {
-    await requireAdmin(request);
-    const body = await request.json();
-    const { name, openTime, closeTime, sortOrder } = body;
+  const sanitizedName = sanitizeName(String(name));
 
-    if (!name || !openTime || !closeTime) {
-      return NextResponse.json({ success: false, error: 'name, openTime, and closeTime are required' }, { status: 400 });
-    }
+  const game = await db.game.create({
+    data: { name: sanitizedName, openTime: String(openTime), closeTime: String(closeTime), sortOrder: Number(sortOrder) || 0, isOpen: true },
+  });
 
-    const game = await db.game.create({
-      data: { name, openTime, closeTime, sortOrder: sortOrder || 0, isOpen: true },
-    });
+  // Invalidate games cache
+  cacheDeleteByPrefix('games:');
 
-    return NextResponse.json({ success: true, data: game, message: 'Game created successfully' });
-  } catch (error: unknown) {
-    if (error && typeof error === 'object' && 'statusCode' in error) {
-      const authError = error as { statusCode: number; message: string };
-      return NextResponse.json({ success: false, error: authError.message }, { status: authError.statusCode });
-    }
-    console.error('Admin game create error:', error);
-    return NextResponse.json({ success: false, error: 'Failed to create game' }, { status: 500 });
-  }
-}
+  logger.info('AdminGames', `Game created "${sanitizedName}" by admin ${session.userId}`);
+  return apiSuccess(game, 'Game created successfully');
+}, { rateLimit: RATE_LIMITS.ADMIN_GENERAL });

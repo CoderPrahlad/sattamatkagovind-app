@@ -1,53 +1,33 @@
-import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { requireAdmin } from '@/lib/auth';
+import { apiHandler, apiSuccess } from '@/lib/api-utils';
+import { RATE_LIMITS } from '@/lib/rate-limit';
+import { logger } from '@/lib/logger';
 
 // GET: Admin views any user's bank detail by user ID
-export async function GET(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    await requireAdmin(request);
-    const { id } = await params;
+export const GET = apiHandler(async (request, context) => {
+  const session = await requireAdmin(request);
+  const params = await context!.params;
+  const id = params.id;
 
-    const bankDetail = await db.bankDetail.findUnique({
-      where: { userId: id },
-      include: {
-        user: {
-          select: {
-            id: true,
-            name: true,
-            mobile: true,
-          },
+  const bankDetail = await db.bankDetail.findUnique({
+    where: { userId: id },
+    include: {
+      user: {
+        select: {
+          id: true,
+          name: true,
+          mobile: true,
         },
       },
-    });
+    },
+  });
 
-    if (!bankDetail) {
-      return NextResponse.json({
-        success: true,
-        data: null,
-        message: 'No bank detail found for this user',
-      });
-    }
-
-    return NextResponse.json({
-      success: true,
-      data: bankDetail,
-    });
-  } catch (error: unknown) {
-    if (error && typeof error === 'object' && 'statusCode' in error) {
-      const authError = error as { statusCode: number; message: string };
-      return NextResponse.json(
-        { success: false, error: authError.message },
-        { status: authError.statusCode }
-      );
-    }
-    console.error('Admin bank detail fetch error:', error);
-    return NextResponse.json(
-      { success: false, error: 'Failed to fetch bank detail' },
-      { status: 500 }
-    );
+  if (!bankDetail) {
+    logger.debug('AdminBankDetail', `No bank detail found for user ${id} by admin ${session.userId}`);
+    return apiSuccess(null, 'No bank detail found for this user');
   }
-}
+
+  logger.debug('AdminBankDetail', `Bank detail fetched for user ${id} by admin ${session.userId}`);
+  return apiSuccess(bankDetail);
+}, { rateLimit: RATE_LIMITS.ADMIN_GENERAL });

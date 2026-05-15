@@ -2,6 +2,16 @@ import { db } from '@/lib/db';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 
+// Timing-safe string comparison to prevent timing attacks
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) {
+    // Still compare to avoid leaking length via timing
+    crypto.timingSafeEqual(Buffer.from(a), Buffer.from(a));
+    return false;
+  }
+  return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+}
+
 // Token-based auth - no cookies, no in-memory session store
 // FAIL FAST: No hardcoded fallbacks — AUTH_SECRET MUST be set in production
 const AUTH_SECRET = process.env.AUTH_SECRET;
@@ -37,7 +47,7 @@ export function verifyAuthToken(token: string): { userId: string; role: string; 
       .update(payload)
       .digest('hex');
 
-    if (signature !== expectedSig) return null;
+    if (!timingSafeEqual(signature, expectedSig)) return null;
 
     const [userId, role, timestamp] = payload.split(':');
     if (!userId || !role || !timestamp) return null;

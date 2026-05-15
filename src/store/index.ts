@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { toast } from '@/hooks/use-toast';
-import { robustFetch, getFetchErrorMessage } from '@/lib/fetch';
+import { robustFetch, safeJsonParse, getFetchErrorMessage } from '@/lib/fetch';
 
 // Helper: persist auth to localStorage
 function loadPersistedAuth(): { user: User | null; authToken: string | null; adminMode: boolean } {
@@ -57,11 +57,23 @@ function authFetch(url: string, options: RequestInit = {}): Promise<Response> {
           description: 'Your 2-hour session has expired. Please log in again.',
           variant: 'destructive',
         });
-        // Auto-logout after a short delay so toast is visible
         setTimeout(() => {
           useGameStore.getState().logout();
           sessionExpiredNotified = false;
         }, 1500);
+      }
+    }
+    // Handle rate limiting (429)
+    if (res.status === 429) {
+      try {
+        const json = await safeJsonParse<{ success: boolean; error?: string; retryAfter?: number }>(res);
+        toast({
+          title: 'Too Many Requests',
+          description: json.error || 'Please wait a moment and try again.',
+          variant: 'destructive',
+        });
+      } catch {
+        toast({ title: 'Rate Limited', description: 'Please wait and try again.', variant: 'destructive' });
       }
     }
     return res;
@@ -526,9 +538,9 @@ export const useGameStore = create<GameState>((set, get) => ({
         retryDelay: 500,
         noRetryStatuses: [],
       });
-      const json = await res.json();
+      const json = await safeJsonParse<{ success: boolean; data: { token: string } & Record<string, unknown>; error?: string }>(res);
       if (!json.success) {
-        toast({ title: 'Login Failed', description: json.error, variant: 'destructive' });
+        toast({ title: 'Login Failed', description: json.error || 'Invalid credentials', variant: 'destructive' });
         return;
       }
       const { token, ...user } = json.data;
@@ -561,9 +573,9 @@ export const useGameStore = create<GameState>((set, get) => ({
         retryDelay: 800,
         noRetryStatuses: [],
       });
-      const json = await res.json();
+      const json = await safeJsonParse<{ success: boolean; data: { token: string } & Record<string, unknown>; error?: string }>(res);
       if (!json.success) {
-        toast({ title: 'Registration Failed', description: json.error, variant: 'destructive' });
+        toast({ title: 'Registration Failed', description: json.error || 'Registration failed', variant: 'destructive' });
         return;
       }
       const { token, ...user } = json.data;

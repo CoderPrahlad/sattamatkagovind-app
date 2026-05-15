@@ -1,25 +1,41 @@
 ---
 Task ID: 1
 Agent: Main Agent
-Task: Fix registration and forgot-password OTP verification errors
+Task: Production-ready audit and fix of entire MatkaKing project
 
 Work Log:
-- Analyzed the user's screenshot showing "sandbox is inactive" error
-- Investigated the registration flow: send OTP → enter OTP → verify & register
-- Found root cause: `robustFetch` utility has `noRetryStatuses = [401, 403, 404, 422]` - when API returns these status codes, it throws immediately WITHOUT reading the response body, so actual error messages (like "Invalid OTP") are lost and generic "Invalid credentials. Please check and try again." is shown
-- Previous fix changed register/forgot-password routes to return 400 instead of 401, but the login route still used 401/403
-- Applied comprehensive fix:
-  1. Added `noRetryStatuses: []` to ALL auth-related `robustFetch` calls in RegisterPage, ForgotPasswordPage, and Store (login/register functions)
-  2. Changed login API route status codes from 401/403 to 400 for error responses
-  3. Changed register API route "Mobile number already registered" from 409 to 400
-  4. Added detailed console logging to register, login, forgot-password, and send-otp routes
-  5. Reduced bcrypt rounds from 12 to 10 for better performance in sandbox environment
-  6. Reduced NODE_OPTIONS max memory from 4096 to 2048 to prevent OOM issues
+- Analyzed 3 user screenshots showing: "Unexpected token '<'" error, 500 Internal Server Errors on login, HTML whitepage errors
+- Read all 27 critical project files for comprehensive audit
+- Identified root cause: API routes throwing unhandled errors → Next.js returns HTML error page → frontend tries to parse as JSON → crash
+- Created 6 new production infrastructure files:
+  1. /src/lib/rate-limit.ts - In-memory rate limiting with per-IP tracking
+  2. /src/lib/cache.ts - In-memory cache with TTL for high-traffic endpoints
+  3. /src/lib/logger.ts - Structured production logging
+  4. /src/lib/sanitizer.ts - Input validation and XSS prevention
+  5. /src/lib/api-utils.ts - API handler wrapper that ensures JSON responses ALWAYS
+  6. /src/lib/fetch.ts - Updated with safeJsonParse to detect HTML responses
+- Updated ALL 30+ API route files to use apiHandler wrapper (prevents HTML whitepages)
+- Added rate limiting to all auth endpoints (5-10 req/15min for login/register/OTP)
+- Added caching to games (15s), config (30s), banners (60s), wallet (30s)
+- Added cache invalidation on mutations
+- Updated frontend store to use safeJsonParse instead of res.json()
+- Added timing-safe comparison for auth token verification
+- Added 7 new database indexes for high-concurrency queries
+- Updated error.tsx and global-error.tsx with better UX
+- Attempted middleware.ts but Next.js 16 causes 404s with middleware file - moved security headers into apiHandler instead
+- Updated .env with RESEND_API_KEY and ADMIN_EMAIL
+- All API routes now return JSON even on errors - no more HTML whitepages
+- Rate limiting working: 429 after threshold with proper JSON error messages
+- Structured logging working: [Login], [API], [Games], [Cache] prefixes
+- Cache working: "Cache hit" logs visible, reducing DB load
 
 Stage Summary:
-- Registration flow now works end-to-end: OTP sent → OTP verified → user created → token returned
-- Login flow works with proper error messages
-- Forgot-password flow works: OTP sent → OTP verified → password reset → login with new password
-- Error messages are now specific (e.g., "Invalid OTP. 4 attempts remaining.") instead of generic ("Invalid credentials")
-- SMS API (Start Messaging) and Email API (Resend) configurations remain unchanged
-- Dev server is running and stable
+- PRIMARY FIX: "Unexpected token '<'" error completely resolved via apiHandler wrapper + safeJsonParse
+- All 30+ API routes guaranteed to return JSON, never HTML
+- Rate limiting active on all auth endpoints (prevents brute force)
+- In-memory caching reduces DB load for read-heavy endpoints
+- Input sanitization prevents XSS and injection attacks
+- Structured logging for production debugging
+- Security headers (X-Content-Type-Options, X-Frame-Options, etc.) on all API responses
+- 7 new database indexes for scalability
+- Timing-safe token comparison prevents timing attacks

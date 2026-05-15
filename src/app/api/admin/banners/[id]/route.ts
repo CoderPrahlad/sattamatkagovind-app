@@ -1,101 +1,77 @@
-import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { requireAdmin } from '@/lib/auth';
+import { apiHandler, apiSuccess, apiError, parseJsonBody } from '@/lib/api-utils';
+import { RATE_LIMITS } from '@/lib/rate-limit';
+import { sanitizeText, isValidUrl } from '@/lib/sanitizer';
+import { logger } from '@/lib/logger';
+import { cacheDeleteByPrefix } from '@/lib/cache';
 
-export async function PUT(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    await requireAdmin(request);
-    const { id } = await params;
-    const body = await request.json();
-    const { title, subtitle, ctaText, ctaLink, imageUrl, isActive } = body;
+export const PUT = apiHandler(async (request, context) => {
+  const params = await context!.params;
+  const id = params.id;
+  const session = await requireAdmin(request);
 
-    const banner = await db.banner.findUnique({
-      where: { id },
-    });
+  const { data: body, error: parseError } = await parseJsonBody(request);
+  if (parseError) return parseError;
 
-    if (!banner) {
-      return NextResponse.json(
-        { success: false, error: 'Banner not found' },
-        { status: 404 }
-      );
-    }
+  const { title, subtitle, ctaText, ctaLink, imageUrl, isActive } = body as Record<string, unknown>;
 
-    const updateData: Record<string, unknown> = {};
-    if (title !== undefined) updateData.title = title;
-    if (subtitle !== undefined) updateData.subtitle = subtitle || null;
-    if (ctaText !== undefined) updateData.ctaText = ctaText || null;
-    if (ctaLink !== undefined) updateData.ctaLink = ctaLink || null;
-    if (imageUrl !== undefined) updateData.imageUrl = imageUrl || null;
-    if (typeof isActive === 'boolean') updateData.isActive = isActive;
+  const banner = await db.banner.findUnique({
+    where: { id },
+  });
 
-    const updatedBanner = await db.banner.update({
-      where: { id },
-      data: updateData,
-    });
-
-    return NextResponse.json({
-      success: true,
-      data: updatedBanner,
-      message: 'Banner updated successfully',
-    });
-  } catch (error: unknown) {
-    if (error && typeof error === 'object' && 'statusCode' in error) {
-      const authError = error as { statusCode: number; message: string };
-      return NextResponse.json(
-        { success: false, error: authError.message },
-        { status: authError.statusCode }
-      );
-    }
-    console.error('Admin banner update error:', error);
-    return NextResponse.json(
-      { success: false, error: 'Failed to update banner' },
-      { status: 500 }
-    );
+  if (!banner) {
+    return apiError('Banner not found', 404);
   }
-}
 
-export async function DELETE(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    await requireAdmin(request);
-    const { id } = await params;
-
-    const banner = await db.banner.findUnique({
-      where: { id },
-    });
-
-    if (!banner) {
-      return NextResponse.json(
-        { success: false, error: 'Banner not found' },
-        { status: 404 }
-      );
-    }
-
-    await db.banner.delete({
-      where: { id },
-    });
-
-    return NextResponse.json({
-      success: true,
-      message: 'Banner deleted successfully',
-    });
-  } catch (error: unknown) {
-    if (error && typeof error === 'object' && 'statusCode' in error) {
-      const authError = error as { statusCode: number; message: string };
-      return NextResponse.json(
-        { success: false, error: authError.message },
-        { status: authError.statusCode }
-      );
-    }
-    console.error('Admin banner delete error:', error);
-    return NextResponse.json(
-      { success: false, error: 'Failed to delete banner' },
-      { status: 500 }
-    );
+  // Validate URLs if provided
+  if (ctaLink && !isValidUrl(String(ctaLink))) {
+    return apiError('CTA link must be a valid URL');
   }
-}
+  if (imageUrl && !isValidUrl(String(imageUrl))) {
+    return apiError('Image URL must be a valid URL');
+  }
+
+  const updateData: Record<string, unknown> = {};
+  if (title !== undefined) updateData.title = sanitizeText(String(title));
+  if (subtitle !== undefined) updateData.subtitle = subtitle ? sanitizeText(String(subtitle)) : null;
+  if (ctaText !== undefined) updateData.ctaText = ctaText ? sanitizeText(String(ctaText)) : null;
+  if (ctaLink !== undefined) updateData.ctaLink = ctaLink ? String(ctaLink) : null;
+  if (imageUrl !== undefined) updateData.imageUrl = imageUrl ? String(imageUrl) : null;
+  if (typeof isActive === 'boolean') updateData.isActive = isActive;
+
+  const updatedBanner = await db.banner.update({
+    where: { id },
+    data: updateData,
+  });
+
+  // Invalidate banners cache
+  cacheDeleteByPrefix('banners:');
+
+  logger.info('AdminBanners', `Banner ${id} updated by admin ${session.userId}`);
+  return apiSuccess(updatedBanner, 'Banner updated successfully');
+}, { rateLimit: RATE_LIMITS.ADMIN_GENERAL });
+
+export const DELETE = apiHandler(async (request, context) => {
+  const params = await context!.params;
+  const id = params.id;
+  const session = await requireAdmin(request);
+
+  const banner = await db.banner.findUnique({
+    where: { id },
+  });
+
+  if (!banner) {
+    return apiError('Banner not found', 404);
+  }
+
+  await db.banner.delete({
+    where: { id },
+  });
+
+  // Invalidate banners cache
+  cacheDeleteByPrefix('banners:');
+
+  logger.info('AdminBanners', `Banner ${id} deleted by admin ${session.userId}`);
+  return apiSuccess(null, 'Banner deleted successfully');
+}, { rateLimit: RATE_LIMITS.ADMIN_GENERAL });

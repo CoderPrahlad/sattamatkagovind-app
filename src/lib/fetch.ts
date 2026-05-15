@@ -1,9 +1,13 @@
 /**
  * Robust fetch utility with retry, timeout, and error classification.
- * Designed to survive dev server hot-reloads, network hiccups, and slow compilations.
+ * Production-hardened to handle HTML responses from server errors.
+ * 
+ * KEY FIX: When a server error returns HTML instead of JSON (the 
+ * "Unexpected token '<'" whitepage issue), this utility detects it
+ * and throws a proper error instead of crashing on JSON.parse.
  */
 
-export type FetchErrorType = 'timeout' | 'network' | 'server' | 'client' | 'parse';
+export type FetchErrorType = 'timeout' | 'network' | 'server' | 'client' | 'parse' | 'html';
 
 export class RobustFetchError extends Error {
   type: FetchErrorType;
@@ -40,18 +44,53 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * Check if a response is HTML instead of JSON.
+ * This is the CRITICAL fix for the "Unexpected token '<'" error.
+ */
+function isHtmlResponse(response: Response): boolean {
+  const contentType = response.headers.get('content-type') || '';
+  return contentType.includes('text/html') || contentType.includes('text/xml');
+}
+
+/**
+ * Safely parse a response as JSON, handling HTML responses gracefully.
+ * If the response is HTML (e.g., a server error page), throws a proper error
+ * instead of crashing with "Unexpected token '<'".
+ */
+export async function safeJsonParse<T = unknown>(response: Response): Promise<T> {
+  // Check if response is HTML - this is the whitepage protection
+  if (isHtmlResponse(response)) {
+    throw new RobustFetchError(
+      response.ok 
+        ? 'Server returned HTML instead of JSON. Please refresh the page.'
+        : `Server error (${response.status}). Please try again in a moment.`,
+      'html',
+      response.status
+    );
+  }
+
+  try {
+    const text = await response.text();
+    if (!text || text.trim().length === 0) {
+      throw new RobustFetchError('Empty response from server', 'parse');
+    }
+    return JSON.parse(text) as T;
+  } catch (error) {
+    if (error instanceof RobustFetchError) throw error;
+    // JSON parse error - likely HTML response that wasn't caught by content-type
+    if (error instanceof SyntaxError && error.message.includes('JSON')) {
+      throw new RobustFetchError(
+        'Received an invalid server response. Please refresh the page.',
+        'html',
+        response.status
+      );
+    }
+    throw new RobustFetchError('Failed to parse server response', 'parse');
+  }
+}
+
+/**
  * Robust fetch with retry, timeout, and proper error handling.
- *
- * @example
- * ```ts
- * const res = await robustFetch('/api/auth/login', {
- *   method: 'POST',
- *   body: JSON.stringify({ mobile, password }),
- *   retries: 2,
- *   timeout: 10000,
- * });
- * const data = await res.json();
- * ```
  */
 export async function robustFetch(url: string, options: FetchOptions = {}): Promise<Response> {
   const {
@@ -86,16 +125,7 @@ export async function robustFetch(url: string, options: FetchOptions = {}): Prom
 
       clearTimeout(timeoutId);
 
-      // Don't retry on client errors (4xx) that are in noRetryStatuses
-      if (!response.ok && noRetryStatuses.includes(response.status)) {
-        throw new RobustFetchError(
-          `Request failed with status ${response.status}`,
-          response.status >= 500 ? 'server' : 'client',
-          response.status
-        );
-      }
-
-      // If we get a server error (5xx), retry
+      // If we get an HTML error page (5xx), retry
       if (!response.ok && response.status >= 500 && attempt <= retries) {
         lastError = new RobustFetchError(
           `Server error ${response.status} (attempt ${attempt}/${retries + 1})`,
@@ -106,13 +136,21 @@ export async function robustFetch(url: string, options: FetchOptions = {}): Prom
         continue;
       }
 
+      // Don't retry on client errors (4xx) that are in noRetryStatuses
+      if (!response.ok && noRetryStatuses.includes(response.status)) {
+        throw new RobustFetchError(
+          `Request failed with status ${response.status}`,
+          response.status >= 500 ? 'server' : 'client',
+          response.status
+        );
+      }
+
       return response;
     } catch (error: unknown) {
       clearTimeout(timeoutId);
 
       // If aborted due to timeout
       if (error instanceof DOMException && error.name === 'AbortError') {
-        // Check if it was from external signal or timeout
         if (externalSignal?.aborted) {
           throw new RobustFetchError('Request was cancelled', 'network');
         }
@@ -121,11 +159,9 @@ export async function robustFetch(url: string, options: FetchOptions = {}): Prom
           'timeout'
         );
       } else if (error instanceof RobustFetchError) {
-        // Our own error - rethrow if no more retries
         if (attempt > retries) throw error;
         lastError = error;
       } else {
-        // Network error (connection refused, DNS failure, etc.)
         lastError = new RobustFetchError(
           `Network error: ${error instanceof Error ? error.message : 'Connection failed'} (attempt ${attempt}/${retries + 1})`,
           'network'
@@ -139,21 +175,16 @@ export async function robustFetch(url: string, options: FetchOptions = {}): Prom
     }
   }
 
-  // All retries exhausted
   throw lastError || new RobustFetchError('Request failed after all retries', 'network');
 }
 
 /**
- * Convenience: robustFetch + JSON parse in one call.
+ * Convenience: robustFetch + safe JSON parse in one call.
  * Returns the parsed JSON on success, throws RobustFetchError on failure.
  */
 export async function robustFetchJSON<T = unknown>(url: string, options: FetchOptions = {}): Promise<T> {
   const response = await robustFetch(url, options);
-  try {
-    return await response.json() as T;
-  } catch {
-    throw new RobustFetchError('Failed to parse server response', 'parse');
-  }
+  return safeJsonParse<T>(response);
 }
 
 /**
@@ -170,11 +201,15 @@ export function getFetchErrorMessage(error: unknown): string {
         return 'Server error occurred. Please try again in a moment.';
       case 'parse':
         return 'Received an invalid response from server.';
+      case 'html':
+        return 'Server returned an error page. Please refresh and try again.';
       case 'client':
-        if (error.status === 401) return 'Invalid credentials. Please check and try again.';
+        if (error.status === 401) return 'Session expired. Please log in again.';
         if (error.status === 403) return 'Access denied. Your account may be deactivated.';
         if (error.status === 404) return 'The requested resource was not found.';
+        if (error.status === 409) return 'Conflict - resource already exists.';
         if (error.status === 422) return 'Invalid data submitted. Please check your input.';
+        if (error.status === 429) return 'Too many requests. Please wait a moment and try again.';
         return `Request failed (${error.status}).`;
       default:
         return 'An unexpected error occurred. Please try again.';
