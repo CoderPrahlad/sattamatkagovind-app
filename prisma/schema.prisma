@@ -4,7 +4,11 @@ generator client {
 
 datasource db {
   provider = "sqlite"
+<<<<<<< Updated upstream
   url      = env("DATABASE_URL")
+=======
+    url      = env("DATABASE_URL")
+>>>>>>> Stashed changes
 
 }
 
