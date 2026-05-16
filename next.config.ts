@@ -6,11 +6,8 @@ const nextConfig: NextConfig = {
     ignoreBuildErrors: true,
   },
   reactStrictMode: false,
-  // Hide the Next.js development indicator (the floating "N" icon)
-  devIndicators: {
-    appIsrStatus: false,
-    buildActivity: false,
-  },
+  // Completely hide the Next.js development indicator (the floating "N" icon)
+  devIndicators: false,
 };
 
 export default nextConfig;

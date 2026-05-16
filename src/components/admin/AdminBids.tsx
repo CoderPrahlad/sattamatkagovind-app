@@ -9,6 +9,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useGameStore } from '@/store';
 import { toast } from '@/hooks/use-toast';
 import { StatusBadge } from './AdminShared';
+import { safeJsonParse } from '@/lib/fetch';
 
 export default function AdminBidsView({ loaded }: { loaded?: boolean }) {
   const { adminBids, adminBidsSummary, bidFilterGameId, fetchAdminBids, games } = useGameStore();
@@ -71,7 +72,7 @@ export default function AdminBidsView({ loaded }: { loaded?: boolean }) {
         // Try to read error message
         let errMsg = 'Export failed';
         try {
-          const errData = await res.json();
+          const errData = await safeJsonParse(res);
           errMsg = errData.error || errMsg;
         } catch { errMsg = `Server error (${res.status})`; }
         toast({ title: 'Export Failed', description: errMsg, variant: 'destructive' });
@@ -81,7 +82,7 @@ export default function AdminBidsView({ loaded }: { loaded?: boolean }) {
       const contentType = res.headers.get('content-type') || '';
       if (contentType.includes('application/json')) {
         try {
-          const errData = await res.json();
+          const errData = await safeJsonParse(res);
           toast({ title: 'Export Failed', description: errData.error || 'Unknown error', variant: 'destructive' });
           return;
         } catch { /* fall through */ }

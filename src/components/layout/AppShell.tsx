@@ -16,6 +16,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useGameStore, type GameItem, type BannerItem, type ReferralEarning } from '@/store';
 import { isInClosingWindow, getNowIST, getClosingWindowStatus } from '@/lib/time';
+import { safeJsonParse } from '@/lib/fetch';
 import { toast } from '@/hooks/use-toast';
 
 export default function AppShell() {
@@ -1073,7 +1074,7 @@ function GameResultsHistory({ gameId }: { gameId: string }) {
     const fetchResults = async () => {
       try {
         const res = await fetch(`/api/games/results?gameId=${gameId}&days=30`);
-        const json = await res.json();
+        const json = await safeJsonParse(res);
         if (json.success) {
           const data = json.data;
           if (data.days) {
@@ -1344,14 +1345,16 @@ function WalletView() {
         headers: { Authorization: `Bearer ${token}` },
         body: formData,
       });
-      const json = await res.json();
+      const json = await safeJsonParse(res);
       if (!json.success) {
         toast({ title: 'Upload Failed', description: json.error || 'Failed to upload screenshot', variant: 'destructive' });
         return undefined;
       }
       return json.data.url as string;
-    } catch {
-      toast({ title: 'Upload Error', description: 'Failed to upload screenshot. Please try again.', variant: 'destructive' });
+    } catch (err) {
+      const msg = err instanceof SyntaxError ? 'Server returned an invalid response. Please refresh.' :
+                  err instanceof Error ? err.message : 'Failed to upload screenshot. Please try again.';
+      toast({ title: 'Upload Error', description: msg, variant: 'destructive' });
       return undefined;
     } finally {
       setScreenshotUploading(false);
@@ -1872,7 +1875,7 @@ function SupportView() {
       const res = await fetch(`/api/tickets/${ticketId}/replies`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      const json = await res.json();
+      const json = await safeJsonParse(res);
       if (json.success) {
         setTicketReplies((prev) => ({ ...prev, [ticketId]: json.data }));
       }
@@ -1900,7 +1903,7 @@ function SupportView() {
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: replyText.trim() }),
       });
-      const json = await res.json();
+      const json = await safeJsonParse(res);
       if (json.success) {
         setReplyText('');
         await fetchReplies(ticketId);

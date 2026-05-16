@@ -9,6 +9,7 @@ import { useGameStore } from '@/store';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell
 } from 'recharts';
+import { safeJsonParse } from '@/lib/fetch';
 
 export default function AdminAnalyticsView() {
   const [data, setData] = useState<{
@@ -24,7 +25,7 @@ export default function AdminAnalyticsView() {
       try {
         const token = useGameStore.getState().authToken;
         const res = await fetch('/api/admin/analytics', { headers: { Authorization: `Bearer ${token}` } });
-        const json = await res.json();
+        const json = await safeJsonParse(res);
         if (json.success) setData(json.data);
       } catch {} finally { setLoading(false); }
     };

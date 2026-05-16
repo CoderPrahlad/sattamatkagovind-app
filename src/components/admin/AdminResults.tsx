@@ -7,6 +7,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useGameStore } from '@/store';
+import { safeJsonParse } from '@/lib/fetch';
 
 interface RecentResultItem {
   gameId: string;
@@ -32,7 +33,7 @@ export default function AdminResultsView() {
   const fetchResults = async () => {
     try {
       const res = await fetch('/api/games/results');
-      const json = await res.json();
+      const json = await safeJsonParse(res);
       if (json.success && json.data) {
         // New format: { todayResults: [...], recentResults: [...] }
         if (Array.isArray(json.data.todayResults)) {

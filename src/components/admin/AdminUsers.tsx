@@ -9,6 +9,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useGameStore } from '@/store';
 import { toast } from '@/hooks/use-toast';
 import { StatusBadge } from './AdminShared';
+import { safeJsonParse } from '@/lib/fetch';
 
 export default function AdminUsersView({ loaded }: { loaded?: boolean }) {
   const { adminUsers, fetchAdminUsers, toggleUser } = useGameStore();
@@ -52,7 +53,7 @@ export default function AdminUsersView({ loaded }: { loaded?: boolean }) {
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ balanceAdjustment: balanceOp === 'add' ? amt : -amt }),
       });
-      const json = await res.json();
+      const json = await safeJsonParse(res);
       if (json.success) {
         toast({ title: 'Updated', description: 'Balance adjusted' });
         fetchAdminUsers(1, search);

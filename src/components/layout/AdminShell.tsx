@@ -11,6 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useGameStore } from '@/store';
 import { ViewBoundary } from '../admin/AdminShared';
+import { safeJsonParse } from '@/lib/fetch';
 
 // ── Lazy-loaded admin view components ──
 const AdminDashboardView = lazy(() => import('../admin/AdminDashboard'));
@@ -106,7 +107,7 @@ export default function AdminShell() {
         const res = await fetch('/api/admin/wallet?status=pending', {
           headers: { Authorization: `Bearer ${token}` },
         });
-        const json = await res.json();
+        const json = await safeJsonParse(res);
         if (json.success) {
           const rawData = json.data || [];
           // API may return {transactions: [...]} or [...]

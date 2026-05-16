@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { useGameStore } from '@/store';
 import { toast } from '@/hooks/use-toast';
 import { InputField } from './AdminShared';
+import { safeJsonParse } from '@/lib/fetch';
 
 export default function AdminConfigView() {
   const { adminConfigs, fetchAdminConfigs, updateAdminConfigs } = useGameStore();
@@ -46,7 +47,7 @@ export default function AdminConfigView() {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         body: formData,
       });
-      const json = await res.json();
+      const json = await safeJsonParse(res);
       if (json.success && json.data?.url) {
         setEditValues(prev => ({ ...prev, qr_code_url: json.data.url }));
         setQrPreview(json.data.url);
@@ -56,7 +57,9 @@ export default function AdminConfigView() {
       }
     } catch (err) {
       console.error('QR upload failed:', err);
-      toast({ title: 'Upload Error', description: 'Failed to upload QR code. Please try again.', variant: 'destructive' });
+      const msg = err instanceof SyntaxError ? 'Server returned an invalid response. Please refresh.' :
+                  err instanceof Error ? err.message : 'Failed to upload QR code. Please try again.';
+      toast({ title: 'Upload Error', description: msg, variant: 'destructive' });
     } finally {
       setUploadingQr(false);
       // Reset file input
