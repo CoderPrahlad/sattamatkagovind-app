@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { useGameStore } from '@/store';
 import { toast } from '@/hooks/use-toast';
-import { robustFetch, getFetchErrorMessage } from '@/lib/fetch';
+import { robustFetch, safeJsonParse, getFetchErrorMessage } from '@/lib/fetch';
 
 export default function AdminLoginPage() {
   const [mobile, setMobile] = useState('');
@@ -33,7 +33,7 @@ export default function AdminLoginPage() {
         timeout: 15000,
         retries: 0,
       });
-      const json = await res.json();
+      const json = await safeJsonParse<{ success: boolean; data: { token: string } & Record<string, unknown>; error?: string }>(res);
 
       if (!json.success) {
         toast({ title: 'Login Failed', description: json.error, variant: 'destructive' });

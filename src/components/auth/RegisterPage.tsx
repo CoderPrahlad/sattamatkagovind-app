@@ -11,7 +11,7 @@ import { useGameStore } from '@/store';
 import { useSearchParams } from 'next/navigation';
 import { Suspense } from 'react';
 import { toast } from '@/hooks/use-toast';
-import { robustFetch, getFetchErrorMessage } from '@/lib/fetch';
+import { robustFetch, safeJsonParse, getFetchErrorMessage } from '@/lib/fetch';
 
 type RegisterStep = 'fill-details' | 'verify-otp' | 'success';
 
@@ -63,7 +63,7 @@ function RegisterPageInner() {
         retries: 0,
         noRetryStatuses: [],
       });
-      const json = await res.json();
+      const json = await safeJsonParse<{ success: boolean; error?: string }>(res);
       if (json.success) {
         setStep('verify-otp');
         setOtpTimer(60);
@@ -95,7 +95,7 @@ function RegisterPageInner() {
         retries: 0,
         noRetryStatuses: [],
       });
-      const json = await res.json();
+      const json = await safeJsonParse<{ success: boolean; data: { token: string } & Record<string, unknown>; error?: string }>(res);
       if (json.success) {
         const { token, ...user } = json.data;
         setOtpVerified(true);
@@ -139,7 +139,7 @@ function RegisterPageInner() {
         retries: 0,
         noRetryStatuses: [],
       });
-      const json = await res.json();
+      const json = await safeJsonParse<{ success: boolean; error?: string }>(res);
       if (json.success) {
         setOtpTimer(60);
         toast({ title: 'OTP Resent!', description: 'Check your SMS for the new OTP' });

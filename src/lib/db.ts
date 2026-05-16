@@ -1,9 +1,41 @@
 import { PrismaClient } from '@prisma/client'
+import path from 'path';
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined
   dbConnecting: Promise<void> | undefined
   dbInitialized: boolean | undefined
+}
+
+/**
+ * Resolve the DATABASE_URL to an absolute path.
+ * Handles both relative and absolute paths.
+ * - Relative paths (e.g., "file:./db/custom.db") are resolved relative to the project root
+ * - Absolute paths (e.g., "file:/var/data/custom.db") are used as-is
+ * This ensures the database works correctly when deployed to VPS/local machines
+ * where the project directory path is different.
+ */
+function resolveDatabaseUrl(envUrl: string): string {
+  if (!envUrl) {
+    // Default: use relative path to project root
+    const dbPath = path.join(process.cwd(), 'db', 'custom.db');
+    return `file:${dbPath}`;
+  }
+
+  // If it's already an absolute path, use as-is
+  if (envUrl.startsWith('file:/')) {
+    return envUrl;
+  }
+
+  // If it's a relative path like "file:./db/custom.db", resolve it
+  if (envUrl.startsWith('file:./')) {
+    const relativePath = envUrl.replace('file:', '');
+    const absolutePath = path.resolve(process.cwd(), relativePath);
+    return `file:${absolutePath}`;
+  }
+
+  // For non-file URLs (e.g., PostgreSQL), return as-is
+  return envUrl;
 }
 
 /**
@@ -13,14 +45,20 @@ const globalForPrisma = globalThis as unknown as {
  * - Connection pool settings
  * - Query timeout to prevent hanging requests
  * - Error logging in all environments
+ * - Absolute path resolution for database file
  */
 function createPrismaClient(): PrismaClient {
+  // Resolve DATABASE_URL to absolute path for VPS compatibility
+  const resolvedUrl = resolveDatabaseUrl(process.env.DATABASE_URL || '');
+
   // Add SQLite pragmas to DATABASE_URL for better concurrency
-  let url = process.env.DATABASE_URL || '';
+  let url = resolvedUrl;
   if (url.startsWith('file:') && !url.includes('connection_limit')) {
     const separator = url.includes('?') ? '&' : '?';
     url += `${separator}connection_limit=10&busy_timeout=10000`;
   }
+
+  console.log(`[DB] Database URL resolved to: ${url.split('?')[0]}`);
 
   return new PrismaClient({
     log: [

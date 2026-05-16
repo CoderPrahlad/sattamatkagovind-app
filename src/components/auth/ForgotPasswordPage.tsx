@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { useGameStore } from '@/store';
 import { toast } from '@/hooks/use-toast';
-import { robustFetch, getFetchErrorMessage } from '@/lib/fetch';
+import { robustFetch, safeJsonParse, getFetchErrorMessage } from '@/lib/fetch';
 
 type ForgotStep = 'enter-mobile' | 'verify-otp' | 'reset-password' | 'success';
 
@@ -53,7 +53,7 @@ export default function ForgotPasswordPage() {
         retries: 0,
         noRetryStatuses: [],
       });
-      const json = await res.json();
+      const json = await safeJsonParse<{ success: boolean; error?: string }>(res);
       if (json.success) {
         setStep('verify-otp');
         setOtpTimer(60);
@@ -84,7 +84,7 @@ export default function ForgotPasswordPage() {
         retries: 0,
         noRetryStatuses: [],
       });
-      const json = await res.json();
+      const json = await safeJsonParse<{ success: boolean; error?: string }>(res);
       if (json.success) {
         setStep('reset-password');
         toast({ title: 'OTP Verified!', description: 'Now set your new password' });
@@ -118,7 +118,7 @@ export default function ForgotPasswordPage() {
         retries: 0,
         noRetryStatuses: [],
       });
-      const json = await res.json();
+      const json = await safeJsonParse<{ success: boolean; error?: string }>(res);
       if (json.success) {
         setStep('success');
         toast({ title: 'Password Reset!', description: 'You can now login with your new password' });
