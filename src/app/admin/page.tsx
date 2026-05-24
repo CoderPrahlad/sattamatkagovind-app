@@ -7,9 +7,12 @@ import AdminLoginPage from '@/components/auth/AdminLoginPage';
 import AdminShell from '@/components/layout/AdminShell';
 
 export default function AdminPage() {
-  const { user, isAuthenticated, adminMode } = useGameStore();
+  // ✅ Alag alag subscribe — re-render hoga jab bhi change ho
+  const user = useGameStore(s => s.user);
+  const isAuthenticated = useGameStore(s => s.isAuthenticated);
+  const adminMode = useGameStore(s => s.adminMode);
+
   const [loading, setLoading] = useState(true);
-  const [ready, setReady] = useState(false);
   const initialized = useRef(false);
 
   useEffect(() => {
@@ -29,6 +32,7 @@ export default function AdminPage() {
                 authToken: parsed.authToken,
                 user: parsed.user,
                 isAuthenticated: true,
+                adminMode: parsed.user?.role === 'admin',
               });
             }
           }
@@ -51,9 +55,7 @@ export default function AdminPage() {
                 isAuthenticated: true,
                 adminMode: true,
               });
-              setReady(true);
             } else {
-              // Token valid but not admin
               useGameStore.setState({
                 user: null,
                 authToken: null,
@@ -63,7 +65,6 @@ export default function AdminPage() {
               localStorage.removeItem('mk_auth');
             }
           } else {
-            // Token expired or invalid
             useGameStore.setState({
               user: null,
               authToken: null,
@@ -73,13 +74,14 @@ export default function AdminPage() {
             localStorage.removeItem('mk_auth');
           }
         } catch {
-          // Network error - try with cached data
+          // Network error - trust cached data
           const cached = useGameStore.getState();
           if (cached.user?.role === 'admin') {
-            setReady(true);
+            useGameStore.setState({ adminMode: true });
           }
         }
       }
+
       setLoading(false);
     };
 
@@ -100,7 +102,8 @@ export default function AdminPage() {
     );
   }
 
-  if (ready && isAuthenticated && user?.role === 'admin' && adminMode) {
+  // ✅ ready state hata di — seedha store se check
+  if (isAuthenticated && user?.role === 'admin' && adminMode) {
     return <AdminShell />;
   }
 
