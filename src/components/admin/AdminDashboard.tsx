@@ -1,10 +1,11 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
   Users, Activity, TrendingUp, TrendingDown, Gamepad2,
   Plus, Trophy, Bell, Wallet, ArrowUpRight, Clock, CheckCircle2,
+  Smartphone, Download,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -15,6 +16,25 @@ import { StatusBadge } from './AdminShared';
 export default function AdminDashboardView() {
   const { adminStats, navigate, games } = useGameStore();
   const stats = adminStats;
+
+  // ── APK Download Stats ──
+  const [dlStats, setDlStats] = useState({ total: 0, today: 0 });
+  const [dlLoading, setDlLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchDlStats = () => {
+      fetch('/api/track-download')
+        .then(res => res.json())
+        .then(data => {
+          if (data.success) setDlStats(data.data);
+        })
+        .catch(() => {})
+        .finally(() => setDlLoading(false));
+    };
+    fetchDlStats();
+    const id = setInterval(fetchDlStats, 30000);
+    return () => clearInterval(id);
+  }, []);
 
   if (!stats) {
     return (
@@ -82,6 +102,66 @@ export default function AdminDashboardView() {
           </motion.div>
         ))}
       </div>
+
+      {/* ── APK Download Stats Section ── */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, delay: 0.1 }}
+      >
+        <Card className="bg-gradient-to-br from-indigo-500/10 to-purple-600/5 border border-indigo-500/20">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-indigo-500/20 flex items-center justify-center">
+                  <Smartphone className="w-4 h-4 text-indigo-400" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-white">APK Downloads</h3>
+                  <p className="text-[11px] text-gray-500">Dusri website se track ho raha hai</p>
+                </div>
+              </div>
+              <Badge className="bg-indigo-500/20 text-indigo-400 border-indigo-500/30 text-[11px]">
+                Live Tracking
+              </Badge>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              {/* Total Downloads */}
+              <div className="bg-gray-900/60 rounded-xl p-3 border border-indigo-500/10">
+                <div className="flex items-center gap-2 mb-1">
+                  <Download className="w-3.5 h-3.5 text-indigo-400" />
+                  <p className="text-[11px] text-gray-400 uppercase tracking-wider">Total Downloads</p>
+                </div>
+                {dlLoading ? (
+                  <Skeleton className="h-8 w-16 bg-gray-700" />
+                ) : (
+                  <p className="text-2xl font-bold text-indigo-400">{dlStats.total.toLocaleString('en-IN')}</p>
+                )}
+                <p className="text-[10px] text-gray-600 mt-0.5">Sabhi time ka total</p>
+              </div>
+
+              {/* Today's Downloads */}
+              <div className="bg-gray-900/60 rounded-xl p-3 border border-purple-500/10">
+                <div className="flex items-center gap-2 mb-1">
+                  <TrendingUp className="w-3.5 h-3.5 text-purple-400" />
+                  <p className="text-[11px] text-gray-400 uppercase tracking-wider">Aaj ke Downloads</p>
+                </div>
+                {dlLoading ? (
+                  <Skeleton className="h-8 w-16 bg-gray-700" />
+                ) : (
+                  <p className="text-2xl font-bold text-purple-400">{dlStats.today.toLocaleString('en-IN')}</p>
+                )}
+                <p className="text-[10px] text-gray-600 mt-0.5">Aaj midnight se abhi tak</p>
+              </div>
+            </div>
+
+            <p className="text-[10px] text-gray-600 mt-3 text-center">
+              Har 30 second mein auto-refresh hota hai
+            </p>
+          </CardContent>
+        </Card>
+      </motion.div>
 
       {/* ── Quick Actions Bar ── */}
       <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">

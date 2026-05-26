@@ -12,7 +12,7 @@ model User {
   name          String
   mobile        String   @unique
   password      String
-  role          String   @default("user")  // "user" or "admin"
+  role          String   @default("user")
   balance       Float    @default(0)
   winningAmount Float    @default(0)
   referralCode  String   @unique
@@ -38,9 +38,9 @@ model User {
 
 model Game {
   id          String   @id @default(cuid())
-  name        String   @unique  // Gali, Disawar, Ghaziabad, Faridabad, Kalyan
-  openTime    String   // e.g. "09:00"
-  closeTime   String   // e.g. "10:00"
+  name        String   @unique
+  openTime    String
+  closeTime   String
   isOpen      Boolean  @default(true)
   sortOrder   Int      @default(0)
   createdAt   DateTime @default(now())
@@ -54,8 +54,8 @@ model GameResult {
   id        String   @id @default(cuid())
   gameId    String
   game      Game     @relation(fields: [gameId], references: [id])
-  result    String   // e.g. "5" or "23" or "100"
-  date      String   // e.g. "2024-05-01"
+  result    String
+  date      String
   declaredAt DateTime @default(now())
 
   @@index([gameId, date])
@@ -68,12 +68,12 @@ model Bid {
   user       User     @relation(fields: [userId], references: [id])
   gameId     String
   game       Game     @relation(fields: [gameId], references: [id])
-  bidType    String   // "single" or "jodi"
-  number     String   // selected number(s)
+  bidType    String
+  number     String
   amount     Float
-  status     String   @default("pending")  // "pending", "won", "lost"
+  status     String   @default("pending")
   winAmount  Float?
-  targetDate String   // the date this bid is for (e.g. "2024-05-01"), allows next-day bidding
+  targetDate String
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -90,9 +90,9 @@ model WalletTransaction {
   id        String   @id @default(cuid())
   userId    String
   user      User     @relation(fields: [userId], references: [id])
-  type      String   // "deposit", "withdrawal", "bid", "win"
+  type      String
   amount    Float
-  status    String   @default("pending")  // "pending", "approved", "rejected"
+  status    String   @default("pending")
   upiNumber String?
   bankAccount String?
   bankName  String?
@@ -121,7 +121,7 @@ model Notification {
   user      User?    @relation(fields: [userId], references: [id])
   title     String
   message   String
-  type      String   @default("info")  // "info", "success", "warning", "offer"
+  type      String   @default("info")
   isRead    Boolean  @default(false)
   createdAt DateTime @default(now())
 
@@ -195,12 +195,22 @@ model TicketReply {
 
 model OtpEntry {
   id        String   @id @default(cuid())
-  mobile    String   // phone number or identifier
-  otp       String   // the OTP code
-  purpose   String   @default("sms")  // "sms" or "admin-email"
+  mobile    String
+  otp       String
+  purpose   String   @default("sms")
   verified  Boolean  @default(false)
-  expiresAt DateTime // when the OTP expires
+  expiresAt DateTime
   createdAt DateTime @default(now())
 
   @@index([mobile, purpose])
+}
+
+// ─── NEW: APK Download Tracking ───────────────────────────
+model AppDownload {
+  id           String   @id @default(cuid())
+  downloadedAt DateTime @default(now())
+  ipAddress    String?
+  source       String?  @default("external")
+
+  @@index([downloadedAt])
 }

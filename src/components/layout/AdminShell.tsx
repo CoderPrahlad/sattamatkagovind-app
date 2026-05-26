@@ -79,6 +79,9 @@ export default function AdminShell() {
   const lastKnownPendingIds = useRef<Set<string>>(new Set());
   const [pendingCount, setPendingCount] = useState(0);
 
+  // ── CHANGE 1: Download stats state add kiya ──
+  const [dlStats, setDlStats] = useState({ total: 0, today: 0 });
+
   // Track whether initial data load has completed for each view
   const [viewLoaded, setViewLoaded] = useState<Record<string, boolean>>({});
 
@@ -99,6 +102,21 @@ export default function AdminShell() {
     return () => clearInterval(id);
   }, []);
 
+  // ── CHANGE 2: Download stats fetch useEffect add kiya ──
+  useEffect(() => {
+    const fetchDlStats = () => {
+      fetch('/api/track-download')
+        .then(res => res.json())
+        .then(data => {
+          if (data.success) setDlStats(data.data);
+        })
+        .catch(() => {});
+    };
+    fetchDlStats();
+    const id = setInterval(fetchDlStats, 30000);
+    return () => clearInterval(id);
+  }, []);
+
   useEffect(() => {
     const pollPending = async () => {
       try {
@@ -110,7 +128,6 @@ export default function AdminShell() {
         const json = await safeJsonParse(res);
         if (json.success) {
           const rawData = json.data || [];
-          // API may return {transactions: [...]} or [...]
           const pending = Array.isArray(rawData) ? rawData : (rawData.transactions || []);
           const currentIds = new Set(pending.map((t: { id: string }) => t.id));
           const prevIds = lastKnownPendingIds.current;
@@ -158,7 +175,6 @@ export default function AdminShell() {
     setSidebarOpen(false);
   };
 
-  // Determine if current view has completed its initial data load
   const isViewLoaded = viewLoaded[currentView] ?? false;
 
   const renderAdminView = () => {
@@ -243,7 +259,23 @@ export default function AdminShell() {
             </button>
             <h1 className="text-base font-semibold text-white">{adminNavItems.find((item) => item.key === currentView)?.label ?? 'Dashboard'}</h1>
           </div>
+
+          {/* ── CHANGE 3: Download stats header mein add kiye ── */}
           <div className="flex items-center gap-4">
+            <div className="hidden sm:flex items-center gap-2">
+              <div className="flex items-center gap-1.5 bg-green-500/10 px-2.5 py-1 rounded-md">
+                <Activity className="w-3 h-3 text-green-400" />
+                <span className="text-[11px] text-green-400 font-medium">
+                  {dlStats.total} Downloads
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5 bg-blue-500/10 px-2.5 py-1 rounded-md">
+                <TrendingUp className="w-3 h-3 text-blue-400" />
+                <span className="text-[11px] text-blue-400 font-medium">
+                  Aaj: {dlStats.today}
+                </span>
+              </div>
+            </div>
             <div className="flex items-center gap-2">
               <span className="relative flex h-2 w-2">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
