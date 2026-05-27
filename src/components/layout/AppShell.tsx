@@ -659,43 +659,49 @@ function GamePlayView() {
       return dateStr;
     }
   };
-
-  const handlePlaceBid = async () => {
+const handlePlaceBid = async () => {
     if (!selectedGame || selectedNumbers.length === 0) return;
     setPlacing(true);
 
-    // Snapshot current state BEFORE placing (prevent stale closures)
-    const gameId = selectedGame.id;
-    const bidType = selectedBidType;
-    const amt = bidAmount;
-    const numbers = [...selectedNumbers];
-    // Determine target: if result declared, always bid for tomorrow
-    const target = (todayResultDeclared && nextDayBiddingAvailable) ? 'tomorrow' : 'today';
+    try {
+      // Snapshot current state BEFORE placing (prevent stale closures)
+      const gameId = selectedGame.id;
+      const bidType = selectedBidType;
+      const amt = bidAmount;
+      const numbers = [...selectedNumbers];
+      // Determine target: if result declared, always bid for tomorrow
+      const target = (todayResultDeclared && nextDayBiddingAvailable) ? 'tomorrow' : 'today';
 
-    let successCount = 0;
-    let lastError = '';
+      let successCount = 0;
+      let lastError = '';
 
-    for (const num of numbers) {
-      try {
-        await placeBid(gameId, bidType, num, amt, target);
-        successCount++;
-      } catch (err) {
-        lastError = err instanceof Error ? err.message : 'Failed to place bid';
-        break; // Stop on first failure to avoid partial confusing results
+      for (const num of numbers) {
+        try {
+          await placeBid(gameId, bidType, num, amt, target);
+          successCount++;
+        } catch (err) {
+          lastError = err instanceof Error ? err.message : 'Failed to place bid';
+          break; // Stop on first failure to avoid partial confusing results
+        }
       }
-    }
 
-    if (successCount > 0) {
-      toast({ title: 'Bid Placed!', description: successCount === numbers.length
-        ? `All ${successCount} bids placed successfully${target === 'tomorrow' ? ' for next day' : ''}`
-        : `${successCount}/${numbers.length} bids placed. ${lastError}`
-      });
-      clearBidSelection();
+      if (successCount > 0) {
+        toast({ title: 'Bid Placed!', description: successCount === numbers.length
+          ? `All ${successCount} bids placed successfully${target === 'tomorrow' ? ' for next day' : ''}`
+          : `${successCount}/${numbers.length} bids placed. ${lastError}`
+        });
+        clearBidSelection();
+      }
+      if (successCount === 0 && lastError) {
+        toast({ title: 'Bid Failed', description: lastError, variant: 'destructive' });
+      }
+    } catch (e) {
+      console.error("Unexpected error in bid placement:", e);
+    } finally {
+      // YEH SABSE ZAROORI LINE HAI!
+      // Chahe success ho ya error aaye, yeh button ko 100% normal kar dega
+      setPlacing(false);
     }
-    if (successCount === 0 && lastError) {
-      toast({ title: 'Bid Failed', description: lastError, variant: 'destructive' });
-    }
-    setPlacing(false);
   };
 
   const handleCustomAmountSubmit = () => {
