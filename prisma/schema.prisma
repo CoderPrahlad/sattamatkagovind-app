@@ -15,6 +15,7 @@ model User {
   role          String   @default("user")
   balance       Float    @default(0)
   winningAmount Float    @default(0)
+  referralBalance Float @default(0)
   referralCode  String   @unique
   referredBy    String?
   referrer      User?    @relation("Referral", fields: [referredBy], references: [id])

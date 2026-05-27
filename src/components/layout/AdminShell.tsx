@@ -5,7 +5,8 @@ import { motion } from 'framer-motion';
 import {
   Crown, LogOut, LayoutDashboard, Users, CreditCard,
   Gamepad2, Trophy, Image as ImageIcon, Bell, Settings, Menu, X,
-  BarChart3, Headphones, TrendingUp, Activity, Wallet, Gift
+  BarChart3, Headphones, TrendingUp, Activity, Wallet, Gift,
+  type LucideIcon
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -56,7 +57,8 @@ type AdminView =
   | 'admin-analytics'
   | 'admin-referrals';
 
-const adminNavItems: { key: AdminView; icon: typeof LayoutDashboard; label: string }[] = [
+// FIXED: Used LucideIcon type for perfect TypeScript compatibility
+const adminNavItems: { key: AdminView; icon: LucideIcon; label: string }[] = [
   { key: 'admin-dashboard', icon: LayoutDashboard, label: 'Dashboard' },
   { key: 'admin-users', icon: Users, label: 'Users' },
   { key: 'admin-wallet', icon: CreditCard, label: 'Wallet' },
@@ -72,19 +74,22 @@ const adminNavItems: { key: AdminView; icon: typeof LayoutDashboard; label: stri
 ];
 
 export default function AdminShell() {
-  const { currentView, navigate, logout, fetchAdminDashboard, fetchAdminUsers, fetchAdminWalletRequests, fetchAdminConfigs, fetchGames, fetchAdminBids, fetchAdminTickets, fetchAdminReferrals, setAdminMode } = useGameStore();
+  const { 
+    currentView, navigate, logout, fetchAdminDashboard, fetchAdminUsers, 
+    fetchAdminWalletRequests, fetchAdminConfigs, fetchGames, fetchAdminBids, 
+    fetchAdminTickets, fetchAdminReferrals, setAdminMode 
+  } = useGameStore();
+  
   const [sidebarOpen, setSidebarOpen] = useState(false);
-
   const audioRef = useRef<HTMLAudioElement>(null);
   const lastKnownPendingIds = useRef<Set<string>>(new Set());
   const [pendingCount, setPendingCount] = useState(0);
 
-  // ── CHANGE 1: Download stats state add kiya ──
+  // ── Download stats state ──
   const [dlStats, setDlStats] = useState({ total: 0, today: 0 });
 
   // Track whether initial data load has completed for each view
   const [viewLoaded, setViewLoaded] = useState<Record<string, boolean>>({});
-
   const [istTime, setIstTime] = useState('');
 
   useEffect(() => {
@@ -102,7 +107,7 @@ export default function AdminShell() {
     return () => clearInterval(id);
   }, []);
 
-  // ── CHANGE 2: Download stats fetch useEffect add kiya ──
+  // ── Download stats fetch useEffect ──
   useEffect(() => {
     const fetchDlStats = () => {
       fetch('/api/track-download')
@@ -113,7 +118,8 @@ export default function AdminShell() {
         .catch(() => {});
     };
     fetchDlStats();
-    const id = setInterval(fetchDlStats, 30000);
+    // FIXED: Increased to 60s to prevent Rate Limit (429) IP Ban
+    const id = setInterval(fetchDlStats, 60000);
     return () => clearInterval(id);
   }, []);
 
@@ -125,11 +131,16 @@ export default function AdminShell() {
         const res = await fetch('/api/admin/wallet?status=pending', {
           headers: { Authorization: `Bearer ${token}` },
         });
-        const json = await safeJsonParse(res);
+        
+        // Prevent parsing if rate limited to avoid errors
+        if (res.status === 429) return; 
+
+        // FIXED: Added strict types to safeJsonParse
+        const json = await safeJsonParse<{ success: boolean; data?: any }>(res);
         if (json.success) {
           const rawData = json.data || [];
           const pending = Array.isArray(rawData) ? rawData : (rawData.transactions || []);
-          const currentIds = new Set(pending.map((t: { id: string }) => t.id));
+          const currentIds = new Set<string>(pending.map((t: any) => t.id));
           const prevIds = lastKnownPendingIds.current;
           const hasNew = !prevIds || [...currentIds].some(id => !prevIds.has(id));
           if (hasNew && prevIds && prevIds.size > 0 && currentIds.size > 0) {
@@ -141,7 +152,9 @@ export default function AdminShell() {
       } catch {}
     };
     pollPending();
-    const id = setInterval(pollPending, 8000);
+    
+    // FIXED: Increased interval to 60s to prevent Rate Limit IP Ban
+    const id = setInterval(pollPending, 60000);
     return () => clearInterval(id);
   }, []);
 
@@ -260,7 +273,6 @@ export default function AdminShell() {
             <h1 className="text-base font-semibold text-white">{adminNavItems.find((item) => item.key === currentView)?.label ?? 'Dashboard'}</h1>
           </div>
 
-          {/* ── CHANGE 3: Download stats header mein add kiye ── */}
           <div className="flex items-center gap-4">
             <div className="hidden sm:flex items-center gap-2">
               <div className="flex items-center gap-1.5 bg-green-500/10 px-2.5 py-1 rounded-md">

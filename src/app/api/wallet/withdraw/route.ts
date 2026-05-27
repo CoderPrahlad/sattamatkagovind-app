@@ -28,7 +28,6 @@ export const POST = apiHandler(async (request) => {
     return apiError('Payment method must be "bank" or "upi"');
   }
 
-  // Validate required fields per payment method
   if (rawPaymentMethod === 'bank') {
     if (!rawBankHolderName || !rawBankAccountNumber || !rawIfscCode || !rawBankName) {
       return apiError('Bank holder name, account number, IFSC code, and bank name are required for bank transfer');
@@ -45,14 +44,6 @@ export const POST = apiHandler(async (request) => {
     return apiError('Amount must be a positive number');
   }
 
-  // Sanitize inputs
-  const bankHolderName = rawBankHolderName ? sanitizeText(rawBankHolderName, 100) : null;
-  const bankAccountNumber = rawBankAccountNumber ? sanitizeAccountNumber(rawBankAccountNumber) : null;
-  const ifscCode = rawIfscCode ? sanitizeText(rawIfscCode, 20) : null;
-  const bankName = rawBankName ? sanitizeText(rawBankName, 100) : null;
-  const upiId = rawUpiId ? sanitizeUPI(rawUpiId) : null;
-
-  // Get minimum withdrawal from config
   const minWithdrawConfig = await db.gameConfig.findUnique({
     where: { key: 'min_withdraw_amount' },
   });
@@ -62,26 +53,41 @@ export const POST = apiHandler(async (request) => {
     return apiError(`Minimum withdrawal amount is ₹${minAmount}`);
   }
 
-  // Get user info for email alert (before transaction modifies balance)
+  const bankHolderName = rawBankHolderName ? sanitizeText(rawBankHolderName, 100) : null;
+  const bankAccountNumber = rawBankAccountNumber ? sanitizeAccountNumber(rawBankAccountNumber) : null;
+  const ifscCode = rawIfscCode ? sanitizeText(rawIfscCode, 20) : null;
+  const bankName = rawBankName ? sanitizeText(rawBankName, 100) : null;
+  const upiId = rawUpiId ? sanitizeUPI(rawUpiId) : null;
+
   const user = await db.user.findUnique({
     where: { id: session.userId },
-    select: { name: true, mobile: true },
+    select: { name: true, mobile: true, winningAmount: true },
   });
 
-  // Create transaction, deduct balance, and save bank detail
-  // Balance check is done inside the transaction via conditional update to prevent race conditions
+  if (!user) return apiError('User not found', 404);
+
+  // ✅ Only winning amount can be withdrawn
+  if (user.winningAmount < rawAmount) {
+    return apiError(
+      `Insufficient winning balance. Your winning balance is ₹${user.winningAmount.toFixed(2)}. Only winning amount can be withdrawn.`
+    );
+  }
+
   const result = await db.$transaction(async (tx) => {
-    // Deduct balance — only succeeds if balance >= amount
+    // ✅ Deduct IMMEDIATELY from winningAmount + balance when request is placed
+    // This prevents double withdrawal requests
     const updateResult = await tx.user.updateMany({
-      where: { id: session.userId, balance: { gte: rawAmount } },
-      data: { balance: { decrement: rawAmount } },
+      where: { id: session.userId, winningAmount: { gte: rawAmount } },
+      data: {
+        winningAmount: { decrement: rawAmount },
+        balance: { decrement: rawAmount },
+      },
     });
 
     if (updateResult.count === 0) {
       throw new Error('INSUFFICIENT_BALANCE');
     }
 
-    // Create withdrawal transaction with structured fields
     const transaction = await tx.walletTransaction.create({
       data: {
         userId: session.userId,
@@ -96,7 +102,6 @@ export const POST = apiHandler(async (request) => {
       },
     });
 
-    // Also save to BankDetail for the user (upsert)
     await tx.bankDetail.upsert({
       where: { userId: session.userId },
       update: {
@@ -119,25 +124,23 @@ export const POST = apiHandler(async (request) => {
     return transaction;
   });
 
-  // Invalidate wallet cache
   cacheDeleteByPrefix(`wallet:${session.userId}`);
 
-  // Send email alert to admin (fire-and-forget, don't block response)
-  if (user) {
-    sendWithdrawalAlert({
-      userName: user.name,
-      userMobile: user.mobile,
-      amount: rawAmount,
-      paymentMethod: rawPaymentMethod,
-      accountHolder: bankHolderName,
-      accountNumber: bankAccountNumber,
-      bankName,
-      ifscCode,
-      upiId,
-    }).catch(() => {});
-  }
+  sendWithdrawalAlert({
+    userName: user.name,
+    userMobile: user.mobile,
+    amount: rawAmount,
+    paymentMethod: rawPaymentMethod,
+    accountHolder: bankHolderName,
+    accountNumber: bankAccountNumber,
+    bankName,
+    ifscCode,
+    upiId,
+  }).catch(() => {});
 
-  logger.info('Withdraw', 'Withdrawal request created', { userId: session.userId, amount: rawAmount, method: rawPaymentMethod });
+  logger.info('Withdraw', 'Withdrawal request created, balance deducted immediately', {
+    userId: session.userId, amount: rawAmount, method: rawPaymentMethod
+  });
 
-  return apiSuccess(result, 'Withdrawal request submitted. Awaiting approval.');
+  return apiSuccess(result, 'Withdrawal request submitted. Amount has been deducted from your winning balance. Awaiting approval.');
 }, { rateLimit: RATE_LIMITS.WITHDRAW, rateLimitSuffix: 'withdraw' });

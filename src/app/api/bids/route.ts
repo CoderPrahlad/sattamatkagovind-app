@@ -17,27 +17,22 @@ export const POST = apiHandler(async (request) => {
   const number = body.number as string;
   const amount = body.amount as number;
 
-  // Validate required fields
   if (!gameId || !bidType || !number || !amount) {
     return apiError('gameId, bidType, number, and amount are required');
   }
 
-  // Validate bidType
   if (!isValidBidType(bidType)) {
     return apiError('bidType must be "single" or "jodi"');
   }
 
-  // Validate number format
   if (!isValidBidNumber(number, bidType)) {
     return apiError(bidType === 'single' ? 'Single bid number must be 0-9' : 'Jodi bid number must be 00-99');
   }
 
-  // Validate amount
   if (!isValidAmount(amount, 1)) {
     return apiError('Amount must be a number greater than 0');
   }
 
-  // Check max bid amount from config
   const maxBidConfig = await db.gameConfig.findUnique({
     where: { key: 'max_bid_amount' },
   });
@@ -47,78 +42,126 @@ export const POST = apiHandler(async (request) => {
     return apiError(`Maximum bid amount is ₹${maxBidAmount}`);
   }
 
-  // Check game exists and is accepting bids
-  const game = await db.game.findUnique({
-    where: { id: gameId },
-  });
+  const game = await db.game.findUnique({ where: { id: gameId } });
+  if (!game) return apiError('Game not found', 404);
+  if (!game.isOpen) return apiError('Game is currently closed');
 
-  if (!game) {
-    return apiError('Game not found', 404);
-  }
-
-  if (!game.isOpen) {
-    return apiError('Game is currently closed');
-  }
-
-  // SERVER IS THE SINGLE SOURCE OF TRUTH for dates — ignore client's targetDate
-  // The server decides today vs tomorrow based on IST time and game state
   const today = getTodayIST();
   const tomorrow = getTomorrowIST();
 
-  // Check if result exists for today
   const todayResult = await db.gameResult.findFirst({
     where: { gameId, date: today },
   });
 
-  // Check if currently in closing window
   const isClosingNow = isInClosingWindow(game.openTime, game.closeTime);
 
-  // Determine target date based on server-side game state:
-  // 1. If today's result is declared → bid for tomorrow
-  // 2. If currently in closing window → bid for tomorrow
-  // 3. Otherwise → bid for today
   let resolvedTargetDate: string;
   if (todayResult) {
-    // Result already declared for today, so bid for tomorrow
     resolvedTargetDate = tomorrow;
   } else if (isClosingNow) {
-    // In closing window — allow next-day bids
     resolvedTargetDate = tomorrow;
   } else {
-    // Normal: bid for today
     resolvedTargetDate = today;
   }
 
-  // For next-day bids: allowed only after result is declared OR during closing window
-  if (resolvedTargetDate === tomorrow) {
-    if (!todayResult && !isClosingNow) {
-      return apiError('Next-day bidding is not available yet. It opens after the result is declared or during the closing window.');
-    }
+  if (resolvedTargetDate === tomorrow && !todayResult && !isClosingNow) {
+    return apiError('Next-day bidding is not available yet.');
   }
 
-  // Create bid, deduct balance, and create transaction in a transaction
-  const result = await db.$transaction(async (tx) => {
-    // Deduct from user balance — only succeeds if balance >= amount
-    const updateResult = await tx.user.updateMany({
-      where: { id: session.userId, balance: { gte: amount } },
-      data: { balance: { decrement: amount } },
-    });
+  // Get user balances
+  const user = await db.user.findUnique({
+    where: { id: session.userId },
+    select: { balance: true, winningAmount: true, referralBalance: true },
+  });
 
-    if (updateResult.count === 0) {
-      throw new Error('INSUFFICIENT_BALANCE');
+  if (!user) return apiError('User not found', 404);
+
+  /**
+   * BALANCE SPLIT LOGIC:
+   * Ideal split: 35% from winningAmount, 10% from referralBalance, 55% from deposit
+   * 
+   * deposit = balance - winningAmount - referralBalance
+   * (balance is total of all three)
+   * 
+   * If any source is insufficient, the shortfall is covered by deposit.
+   * If total is still insufficient → error.
+   */
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+
+  // Ideal shares
+  const idealWinning  = round2(amount * 0.35);
+  const idealReferral = round2(amount * 0.10);
+  const idealDeposit  = round2(amount - idealWinning - idealReferral);
+
+  // Actual available in each bucket
+  const availableWinning  = user.winningAmount;
+  const availableReferral = user.referralBalance;
+  // deposit = total balance minus the other two tracked buckets
+  const availableDeposit  = round2(user.balance - user.winningAmount - user.referralBalance);
+
+  // Clamp each bucket to what's available; shortfall rolls to deposit
+  const actualWinning  = round2(Math.min(idealWinning, availableWinning));
+  const winningShortfall = round2(idealWinning - actualWinning);
+
+  const actualReferral = round2(Math.min(idealReferral, availableReferral));
+  const referralShortfall = round2(idealReferral - actualReferral);
+
+  const depositNeeded = round2(idealDeposit + winningShortfall + referralShortfall);
+  const actualDeposit = round2(Math.min(depositNeeded, availableDeposit));
+
+  const totalCovered = round2(actualWinning + actualReferral + actualDeposit);
+
+  if (totalCovered < amount) {
+    return apiError(
+      `Insufficient balance. Required: ₹${amount} | Available — Winning: ₹${availableWinning}, Referral: ₹${availableReferral}, Deposit: ₹${availableDeposit}`
+    );
+  }
+
+  const result = await db.$transaction(async (tx) => {
+    // 1. Deduct winningAmount bucket
+    if (actualWinning > 0) {
+      const r = await tx.user.updateMany({
+        where: { id: session.userId, winningAmount: { gte: actualWinning } },
+        data: {
+          winningAmount: { decrement: actualWinning },
+          balance: { decrement: actualWinning },
+        },
+      });
+      if (r.count === 0) throw new Error('INSUFFICIENT_BALANCE');
+    }
+
+    // 2. Deduct referralBalance bucket
+    if (actualReferral > 0) {
+      const r = await tx.user.updateMany({
+        where: { id: session.userId, referralBalance: { gte: actualReferral } },
+        data: {
+          referralBalance: { decrement: actualReferral },
+          balance: { decrement: actualReferral },
+        },
+      });
+      if (r.count === 0) throw new Error('INSUFFICIENT_BALANCE');
+    }
+
+    // 3. Deduct deposit (balance only, no separate bucket field)
+    if (actualDeposit > 0) {
+      const r = await tx.user.updateMany({
+        where: { id: session.userId, balance: { gte: actualDeposit } },
+        data: { balance: { decrement: actualDeposit } },
+      });
+      if (r.count === 0) throw new Error('INSUFFICIENT_BALANCE');
     }
 
     // Create wallet transaction
-    const transaction = await tx.walletTransaction.create({
+    await tx.walletTransaction.create({
       data: {
         userId: session.userId,
         type: 'bid',
         amount: -amount,
         status: 'approved',
+        adminNote: `Winning: ₹${actualWinning} | Referral: ₹${actualReferral} | Deposit: ₹${actualDeposit}`,
       },
     });
 
-    // Create bid with targetDate
     const bid = await tx.bid.create({
       data: {
         userId: session.userId,
@@ -134,10 +177,16 @@ export const POST = apiHandler(async (request) => {
     return bid;
   });
 
-  // Invalidate wallet cache
   cacheDeleteByPrefix(`wallet:${session.userId}`);
 
-  logger.info('Bid', 'Bid placed', { userId: session.userId, gameId, bidType, number, amount, targetDate: resolvedTargetDate });
+  logger.info('Bid', 'Bid placed', {
+    userId: session.userId,
+    gameId, bidType, number, amount,
+    winningUsed: actualWinning,
+    referralUsed: actualReferral,
+    depositUsed: actualDeposit,
+    targetDate: resolvedTargetDate,
+  });
 
   return apiSuccess(result, resolvedTargetDate === today
     ? 'Bid placed successfully'
@@ -157,9 +206,7 @@ export const GET = apiHandler(async (request) => {
   const bids = await db.bid.findMany({
     where,
     include: {
-      game: {
-        select: { id: true, name: true },
-      },
+      game: { select: { id: true, name: true } },
     },
     orderBy: { createdAt: 'desc' },
     take: 50,

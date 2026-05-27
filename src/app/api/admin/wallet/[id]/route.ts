@@ -19,158 +19,173 @@ export const PUT = apiHandler(async (request, context) => {
     return apiError('Status must be "approved" or "rejected"');
   }
 
-  // 1. FAST READ (Outside Transaction)
-  const transaction = await db.walletTransaction.findUnique({
-    where: { id },
-    include: {
-      user: {
-        select: {
-          id: true,
-          name: true,
-          mobile: true,
-          referredBy: true,
-          referralBonusClaimed: true,
-        },
-      },
-    },
-  });
+  let referralBonusResult: { bonusGiven: boolean; bonusAmount: number; referrerName: string } | null = null;
 
-  if (!transaction) return apiError('Transaction not found', 404);
-  if (transaction.status !== 'pending') return apiError('Transaction is already processed', 400);
-
-  // 2. PRE-FETCH REFERRAL CONFIGS (Parallel fetching for speed)
-  let giveBonus = false;
-  let finalBonus = 0;
-  let bonusPercentage = 10;
-  let bonusMaxAmount = 50;
-  let referrer: { id: string; name: string; isActive: boolean } | null = null;
-
-  if (
-    transaction.type === 'deposit' &&
-    status === 'approved' &&
-    transaction.user.referredBy &&
-    !transaction.user.referralBonusClaimed
-  ) {
-    const [bonusEnabledReq, bonusPctReq, bonusMaxReq, referrerReq] = await Promise.all([
-      db.gameConfig.findUnique({ where: { key: 'referral_bonus_enabled' } }),
-      db.gameConfig.findUnique({ where: { key: 'referral_bonus_percentage' } }),
-      db.gameConfig.findUnique({ where: { key: 'referral_bonus_max_amount' } }),
-      db.user.findUnique({
-        where: { id: transaction.user.referredBy },
-        select: { id: true, name: true, isActive: true },
-      }),
-    ]);
-
-    if (bonusEnabledReq && bonusEnabledReq.value === 'true' && referrerReq?.isActive) {
-      bonusPercentage = bonusPctReq ? parseFloat(bonusPctReq.value) || 0 : 10;
-      bonusMaxAmount = bonusMaxReq ? parseFloat(bonusMaxReq.value) || 0 : 50;
-      referrer = referrerReq;
-
-      if (bonusPercentage > 0 && bonusMaxAmount > 0) {
-        const calculatedBonus = (transaction.amount * bonusPercentage) / 100;
-        finalBonus = Math.round(Math.min(calculatedBonus, bonusMaxAmount) * 100) / 100;
-        if (finalBonus > 0) giveBonus = true;
-      }
-    }
-  }
-
-  const updateData: Record<string, unknown> = { status };
-  if (adminNote) {
-    updateData.adminNote = sanitizeText(String(adminNote));
-  }
-
-  // 3. ARRAY-BASED SEQUENTIAL TRANSACTION (Lightning Fast, No Timeouts)
-  const queries = [];
-
-  if (transaction.type === 'deposit' && status === 'approved') {
-    // Approve Deposit
-    queries.push(
-      db.user.update({
-        where: { id: transaction.userId },
-        data: { balance: { increment: transaction.amount } },
-      })
-    );
-
-    // Referral Bonus Logic
-    if (giveBonus && referrer) {
-      queries.push(
-        db.user.update({
-          where: { id: referrer.id },
-          data: { balance: { increment: finalBonus } },
-        })
-      );
-      queries.push(
-        db.walletTransaction.create({
-          data: {
-            userId: referrer.id,
-            type: 'deposit',
-            amount: finalBonus,
-            status: 'approved',
-            adminNote: `Referral bonus: ${transaction.user.name} (${transaction.user.mobile}) did 1st recharge of ₹${transaction.amount}. ${bonusPercentage}% = ₹${finalBonus}`,
-          },
-        })
-      );
-      queries.push(
-        db.user.update({
-          where: { id: transaction.userId },
-          data: { referralBonusClaimed: true },
-        })
-      );
-    }
-  }
-
-  if (transaction.type === 'withdrawal' && status === 'rejected') {
-    // Reject Withdrawal (Refund)
-    queries.push(
-      db.user.update({
-        where: { id: transaction.userId },
-        data: { balance: { increment: Math.abs(transaction.amount) } },
-      })
-    );
-  }
-
-  // Final Update to the main transaction
-  queries.push(
-    db.walletTransaction.update({
-      where: { id },
-      data: updateData,
-      include: {
-        user: {
-          select: {
-            id: true,
-            name: true,
-            mobile: true,
-            bankDetail: {
-              select: {
-                accountHolder: true,
-                accountNumber: true,
-                ifscCode: true,
-                bankName: true,
-                upiId: true,
+  const result = await withRetry(
+    () => db.$transaction(async (tx) => {
+      const transaction = await tx.walletTransaction.findUnique({
+        where: { id },
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              mobile: true,
+              referredBy: true,
+              referralBonusClaimed: true,
+              bankDetail: {
+                select: {
+                  accountHolder: true,
+                  accountNumber: true,
+                  ifscCode: true,
+                  bankName: true,
+                  upiId: true,
+                },
               },
             },
           },
         },
-      },
-    })
+      });
+
+      if (!transaction) throw new Error('NOT_FOUND');
+      if (transaction.status !== 'pending') throw new Error('ALREADY_PROCESSED');
+
+      // ── DEPOSIT APPROVE ──────────────────────────────────────────
+      // Add to balance only (not winningAmount — deposits are not winnings)
+      if (transaction.type === 'deposit' && status === 'approved') {
+        await tx.user.update({
+          where: { id: transaction.userId },
+          data: { balance: { increment: transaction.amount } },
+        });
+
+        // === REFERRAL BONUS LOGIC ===
+        if (transaction.user.referredBy && !transaction.user.referralBonusClaimed) {
+          const bonusEnabled = await tx.gameConfig.findUnique({
+            where: { key: 'referral_bonus_enabled' },
+          });
+
+          if (bonusEnabled && bonusEnabled.value === 'true') {
+            const bonusPctConfig = await tx.gameConfig.findUnique({
+              where: { key: 'referral_bonus_percentage' },
+            });
+            const bonusPercentage = bonusPctConfig ? parseFloat(bonusPctConfig.value) || 0 : 10;
+
+            const bonusMaxConfig = await tx.gameConfig.findUnique({
+              where: { key: 'referral_bonus_max_amount' },
+            });
+            const bonusMaxAmount = bonusMaxConfig ? parseFloat(bonusMaxConfig.value) || 0 : 50;
+
+            if (bonusPercentage > 0 && bonusMaxAmount > 0) {
+              const calculatedBonus = (transaction.amount * bonusPercentage) / 100;
+              const bonusAmount = Math.min(calculatedBonus, bonusMaxAmount);
+              const finalBonus = Math.round(bonusAmount * 100) / 100;
+
+              if (finalBonus > 0) {
+                const referrer = await tx.user.findUnique({
+                  where: { id: transaction.user.referredBy },
+                  select: { id: true, name: true, balance: true, isActive: true },
+                });
+
+                if (referrer && referrer.isActive) {
+                  // ✅ Referral bonus → balance + referralBalance both
+                  await tx.user.update({
+                    where: { id: referrer.id },
+                    data: {
+                      balance: { increment: finalBonus },
+                      referralBalance: { increment: finalBonus },
+                    },
+                  });
+
+                  await tx.walletTransaction.create({
+                    data: {
+                      userId: referrer.id,
+                      type: 'deposit',
+                      amount: finalBonus,
+                      status: 'approved',
+                      adminNote: `Referral bonus: ${transaction.user.name} (${transaction.user.mobile}) did 1st recharge of ₹${transaction.amount}. ${bonusPercentage}% = ₹${finalBonus}`,
+                    },
+                  });
+
+                  await tx.user.update({
+                    where: { id: transaction.userId },
+                    data: { referralBonusClaimed: true },
+                  });
+
+                  referralBonusResult = {
+                    bonusGiven: true,
+                    bonusAmount: finalBonus,
+                    referrerName: referrer.name,
+                  };
+
+                  logger.info('Referral', `₹${finalBonus} bonus given to ${referrer.name} for referring ${transaction.user.name}`);
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // ── DEPOSIT REJECT ───────────────────────────────────────────
+      // Deposit was not yet added (added only on approve), so nothing to refund
+      // Just update status to rejected
+
+      // ── WITHDRAWAL APPROVE ───────────────────────────────────────
+      // Balance was already deducted when user placed the request.
+      // Just update status to approved — no balance change needed.
+
+      // ── WITHDRAWAL REJECT ────────────────────────────────────────
+      // Refund winningAmount + balance because they were deducted immediately on request
+      if (transaction.type === 'withdrawal' && status === 'rejected') {
+        const refundAmount = Math.abs(transaction.amount);
+        await tx.user.update({
+          where: { id: transaction.userId },
+          data: {
+            winningAmount: { increment: refundAmount },
+            balance: { increment: refundAmount },
+          },
+        });
+        logger.info('AdminWallet', `Withdrawal rejected, ₹${refundAmount} refunded to user ${transaction.userId}`);
+      }
+
+      // ── UPDATE STATUS ─────────────────────────────────────────────
+      const updateData: Record<string, unknown> = { status };
+      if (adminNote) {
+        updateData.adminNote = sanitizeText(String(adminNote));
+      }
+
+      const updated = await tx.walletTransaction.update({
+        where: { id },
+        data: updateData,
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              mobile: true,
+              bankDetail: {
+                select: {
+                  accountHolder: true,
+                  accountNumber: true,
+                  ifscCode: true,
+                  bankName: true,
+                  upiId: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+      return updated;
+    }, { timeout: 25000 }),
+    { context: 'Admin: walletApproval', maxRetries: 2, baseDelay: 500 }
   );
 
-  // Execute all queries in one single batch!
-  const results = await withRetry(() => db.$transaction(queries), { 
-    context: 'Admin: walletApproval', 
-    maxRetries: 3 
-  });
-  
-  // The last query result is our updated wallet transaction
-  const updated = results[results.length - 1];
-
-  // Build response message
   let message = `Transaction ${status} successfully`;
-  if (giveBonus && referrer) {
-    message += `. ₹${finalBonus} referral bonus given to ${referrer.name}`;
-    logger.info('Referral', `₹${finalBonus} bonus given to ${referrer.name} for referring ${transaction.user.name}`);
+  if (referralBonusResult?.bonusGiven) {
+    message += `. ₹${referralBonusResult.bonusAmount} referral bonus given to ${referralBonusResult.referrerName}`;
   }
 
   logger.info('AdminWallet', `Transaction ${id} ${String(status)} by admin ${admin.userId}`);
-  return apiSuccess(updated, message, 200);
+  return apiSuccess(result, message, 200);
 }, { rateLimit: RATE_LIMITS.ADMIN_GENERAL });
