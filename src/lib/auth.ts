@@ -26,7 +26,8 @@ const EFFECTIVE_AUTH_SECRET = AUTH_SECRET || 'dev_only_fallback_change_me';
 
 // Create a self-contained auth token
 export function createAuthToken(userId: string, role: string): string {
-  const timestamp = Date.now().toString(36);
+  // FIXED: Changed Base36 to Base10 for stable timestamp calculation
+  const timestamp = Date.now().toString(10);
   const payload = `${userId}:${role}:${timestamp}`;
   const signature = crypto
     .createHmac('sha256', EFFECTIVE_AUTH_SECRET)
@@ -52,9 +53,12 @@ export function verifyAuthToken(token: string): { userId: string; role: string; 
     const [userId, role, timestamp] = payload.split(':');
     if (!userId || !role || !timestamp) return null;
 
-    // Check token expiry (2 hours)
-    const tokenTime = parseInt(timestamp, 36);
-    const maxAge = 2 * 60 * 60 * 1000;
+    // FIXED: Parse timestamp in Base10
+    const tokenTime = parseInt(timestamp, 10);
+    
+    // FIXED: Increased token expiry to 30 Days (30 * 24 * 60 * 60 * 1000)
+    const maxAge = 30 * 24 * 60 * 60 * 1000;
+    
     if (Date.now() - tokenTime > maxAge) return null;
 
     return { userId, role, issuedAt: tokenTime };

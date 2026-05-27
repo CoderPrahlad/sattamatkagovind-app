@@ -1,8 +1,7 @@
 /**
  * Robust fetch utility with retry, timeout, and error classification.
  * Production-hardened to handle HTML responses from server errors.
- * 
- * KEY FIX: When a server error returns HTML instead of JSON (the 
+ * * KEY FIX: When a server error returns HTML instead of JSON (the 
  * "Unexpected token '<'" whitepage issue), this utility detects it
  * and throws a proper error instead of crashing on JSON.parse.
  */
@@ -34,7 +33,9 @@ interface FetchOptions extends RequestInit {
 const DEFAULT_TIMEOUT = 15_000;
 const DEFAULT_RETRIES = 2;
 const DEFAULT_RETRY_DELAY = 500;
-const NO_RETRY_STATUSES = [401, 403, 404, 422];
+
+// FIXED: Removed 401 from NO_RETRY_STATUSES so it retries on false logouts
+const NO_RETRY_STATUSES = [403, 404, 422];
 
 /**
  * Sleep for a given number of milliseconds
@@ -45,7 +46,6 @@ function sleep(ms: number): Promise<void> {
 
 /**
  * Check if a response is HTML instead of JSON.
- * This is the CRITICAL fix for the "Unexpected token '<'" error.
  */
 function isHtmlResponse(response: Response): boolean {
   const contentType = response.headers.get('content-type') || '';
@@ -54,8 +54,6 @@ function isHtmlResponse(response: Response): boolean {
 
 /**
  * Safely parse a response as JSON, handling HTML responses gracefully.
- * If the response is HTML (e.g., a server error page), throws a proper error
- * instead of crashing with "Unexpected token '<'".
  */
 export async function safeJsonParse<T = unknown>(response: Response): Promise<T> {
   // Check if response is HTML - this is the whitepage protection
@@ -125,11 +123,11 @@ export async function robustFetch(url: string, options: FetchOptions = {}): Prom
 
       clearTimeout(timeoutId);
 
-      // If we get an HTML error page (5xx), retry
-      if (!response.ok && response.status >= 500 && attempt <= retries) {
+      // If we get an HTML error page (5xx) OR a 401 (Unauthorized) now, retry
+      if (!response.ok && (response.status >= 500 || response.status === 401) && attempt <= retries) {
         lastError = new RobustFetchError(
           `Server error ${response.status} (attempt ${attempt}/${retries + 1})`,
-          'server',
+          response.status === 401 ? 'client' : 'server',
           response.status
         );
         await sleep(retryDelay * Math.pow(2, attempt - 1));
@@ -180,7 +178,6 @@ export async function robustFetch(url: string, options: FetchOptions = {}): Prom
 
 /**
  * Convenience: robustFetch + safe JSON parse in one call.
- * Returns the parsed JSON on success, throws RobustFetchError on failure.
  */
 export async function robustFetchJSON<T = unknown>(url: string, options: FetchOptions = {}): Promise<T> {
   const response = await robustFetch(url, options);

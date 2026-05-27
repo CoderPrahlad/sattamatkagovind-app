@@ -31,8 +31,6 @@ function persistAuth(user: User | null, authToken: string | null) {
   } catch {}
 }
 
-// Helper: fetch with auth token + retry + timeout for resilience
-// Automatically handles 401 (session expired) with toast notification and logout
 let sessionExpiredNotified = false;
 
 /**
@@ -54,6 +52,7 @@ async function safeResponseJson<T = any>(res: Response): Promise<T> {
   }
 }
 
+// FIXED authFetch: Retries added, 401 Force Logout removed!
 function authFetch(url: string, options: RequestInit = {}): Promise<Response> {
   const token = useGameStore.getState().authToken;
   const headers = new Headers(options.headers || {});
@@ -63,26 +62,20 @@ function authFetch(url: string, options: RequestInit = {}): Promise<Response> {
   if (!headers.has('Content-Type') && options.body) {
     headers.set('Content-Type', 'application/json');
   }
-  // IMPORTANT: Do NOT include 401/403/404 in noRetryStatuses here.
-  // robustFetch throws for those statuses, preventing us from handling them in .then()
-  // Instead, let the response pass through so we can check res.status in callers.
-  return robustFetch(url, { ...options, headers, timeout: 12000, retries: 1, noRetryStatuses: [422, 502, 503] }).then(async (res) => {
-    // Handle session expiry (2 hours) — show toast and logout
-    // Skip for session check endpoint (handled by checkSession itself)
+  
+  return robustFetch(url, { 
+    ...options, 
+    headers, 
+    timeout: 12000, 
+    retries: 2, 
+    noRetryStatuses: [422, 502, 503] 
+  }).then(async (res) => {
+    // BUG FIX: Removed forceful logout on 401 for generic API calls.
+    // Kept a warning so we can track issues silently without destroying user session.
     if (res.status === 401 && !url.includes('/api/auth/login') && !url.includes('/api/auth/session')) {
-      if (!sessionExpiredNotified) {
-        sessionExpiredNotified = true;
-        toast({
-          title: 'Session Expired',
-          description: 'Your 2-hour session has expired. Please log in again.',
-          variant: 'destructive',
-        });
-        setTimeout(() => {
-          useGameStore.getState().logout();
-          sessionExpiredNotified = false;
-        }, 1500);
-      }
+       console.warn(`[authFetch] Warning: Server returned 401 for ${url}. Keeping session active.`);
     }
+    
     // Handle rate limiting (429)
     if (res.status === 429) {
       try {
@@ -159,37 +152,30 @@ interface SiteConfig {
 }
 
 interface GameState {
-  // Auth
   user: User | null;
   authToken: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;
   adminMode: boolean;
 
-  // Site config (public)
   siteConfig: SiteConfig;
 
-  // Navigation
   currentView: CurrentView;
   selectedGame: GameItem | null;
 
-  // Data
   games: GameItem[];
   bids: BidItem[];
   banners: BannerItem[];
   notifications: NotificationItem[];
   walletTransactions: WalletTransactionItem[];
 
-  // Game play state
   selectedBidType: 'single' | 'jodi';
   selectedNumbers: string[];
   bidAmount: number;
-  bidTargetDate: string; // 'today' or 'tomorrow'
+  bidTargetDate: string;
 
-  // Bank detail
   bankDetail: BankDetailItem | null;
 
-  // Admin data
   adminUsers: AdminUserItem[];
   adminWalletRequests: AdminWalletRequest[];
   adminStats: AdminStats | null;
@@ -202,32 +188,26 @@ interface GameState {
   adminReferrals: AdminReferralItem[];
   adminReferralStats: AdminReferralStats | null;
 
-  // Auth actions
   login: (mobile: string, password: string) => Promise<void>;
   register: (name: string, mobile: string, password: string, referralCode?: string) => Promise<void>;
   logout: () => Promise<void>;
   checkSession: () => Promise<void>;
 
-  // Navigation
   navigate: (view: CurrentView) => void;
   setAdminMode: (mode: boolean) => void;
 
-  // Data fetchers
   fetchGames: () => Promise<void>;
   fetchBids: (filters?: { status?: string; gameId?: string }) => Promise<void>;
   fetchBanners: () => Promise<void>;
   fetchNotifications: () => Promise<void>;
   fetchWallet: () => Promise<void>;
 
-  // User actions
   placeBid: (gameId: string, bidType: string, number: string, amount: number, targetDate?: string) => Promise<void>;
   requestRecharge: (amount: number, upiNumber: string, utrNumber?: string, screenshotUrl?: string) => Promise<void>;
   requestWithdrawal: (data: { amount: number; paymentMethod: string; accountHolder?: string; accountNumber?: string; ifscCode?: string; bankName?: string; upiId?: string }) => Promise<void>;
 
-  // Site config actions
   fetchSiteConfig: () => Promise<void>;
 
-  // Admin actions
   fetchAdminDashboard: () => Promise<void>;
   fetchAdminUsers: (page?: number, search?: string) => Promise<void>;
   fetchAdminWalletRequests: (filters?: { status?: string; dateFrom?: string; dateTo?: string; type?: string }) => Promise<void>;
@@ -243,32 +223,25 @@ interface GameState {
   deleteBanner: (id: string) => Promise<void>;
   createNotification: (data: { title: string; message: string; type?: string; userId?: string }) => Promise<void>;
 
-  // Admin bid management
   fetchAdminBids: (filters?: { status?: string; gameId?: string; dateFrom?: string; dateTo?: string; targetDate?: string }) => Promise<void>;
 
-  // Bank detail
   fetchBankDetail: () => Promise<void>;
   saveBankDetail: (data: { accountHolder?: string; accountNumber?: string; ifscCode?: string; bankName?: string; upiId?: string; paymentMethod?: string }) => Promise<void>;
 
-  // Notifications
   markNotificationsRead: (ids: string[]) => Promise<void>;
 
-  // Support tickets
   createTicket: (data: { subject: string; message: string; type?: string }) => Promise<void>;
   fetchTickets: () => Promise<void>;
   fetchAdminTickets: (status?: string) => Promise<void>;
   updateTicket: (id: string, data: { status?: string; adminReply?: string }) => Promise<void>;
 
-  // Referral
   referralEarnings: ReferralEarning | null;
   fetchReferralEarnings: () => Promise<void>;
   fetchAdminReferrals: (search?: string) => Promise<void>;
 
-  // Game management
   createGame: (data: { name: string; openTime: string; closeTime: string; sortOrder?: number }) => Promise<boolean>;
   deleteGame: (id: string) => Promise<boolean>;
 
-  // Game play actions
   selectGame: (game: GameItem | null) => void;
   setBidType: (type: 'single' | 'jodi') => void;
   toggleNumber: (num: string) => void;
@@ -276,7 +249,6 @@ interface GameState {
   clearBidSelection: () => void;
 }
 
-// -- Types for API responses --
 export interface GameItem {
   id: string;
   name: string;
@@ -498,7 +470,6 @@ export interface AdminReferralStats {
 }
 
 export const useGameStore = create<GameState>((set, get) => ({
-  // -- Initial state (load once from localStorage) --
   ...(() => {
     const cached = loadPersistedAuth();
     return {
@@ -546,7 +517,6 @@ export const useGameStore = create<GameState>((set, get) => ({
     referralBonusMaxAmount: 50,
   },
 
-  // -- Auth actions --
   login: async (mobile: string, password: string) => {
     try {
       const res = await robustFetch('/api/auth/login', {
@@ -645,6 +615,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     toast({ title: 'Logged out', description: 'See you soon!' });
   },
 
+  // FIXED checkSession: Don't clear state on 401. Only explicit rejections clear the state.
   checkSession: async () => {
     try {
       let token = get().authToken;
@@ -661,9 +632,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       }
       const res = await authFetch('/api/auth/session', {
         timeout: 6000,
-        retries: 0,
+        retries: 1, // Increased retries
       });
-      // Use safeJsonParse to prevent "Unexpected token '<'" crash on HTML error pages
       const json = await safeJsonParse<{ success: boolean; data: { token: string } & Record<string, unknown>; error?: string }>(res);
       if (json.success) {
         const { token: newToken, ...user } = json.data;
@@ -679,18 +649,14 @@ export const useGameStore = create<GameState>((set, get) => ({
         get().fetchBanners();
         get().fetchNotifications();
       } else {
-        // Server explicitly rejected the token (401/403/404 - expired/invalid) - clear auth
+        console.warn('[checkSession] Session token was explicitly rejected. Clearing auth.');
         set({ user: null, authToken: null, isAuthenticated: false, currentView: 'auth' });
         persistAuth(null, null);
       }
     } catch {
-      // Network error, timeout, or robustFetch threw for 401/403/404
-      // IMPORTANT: Do NOT clear auth on network errors — the server might just be restarting
-      // Keep the cached auth state so the UI doesn't flicker
+      console.warn('[checkSession] Network error. Maintaining session for resilience.');
       const cached = loadPersistedAuth();
       if (cached.user && cached.authToken) {
-        // Keep current state — user is likely still authenticated
-        // Just ensure currentView isn't stuck on 'auth'
         const currentView = get().currentView;
         if (currentView === 'auth') {
           set({ isAuthenticated: true, currentView: 'home' });
@@ -703,12 +669,10 @@ export const useGameStore = create<GameState>((set, get) => ({
     }
   },
 
-  // -- Navigation --
   navigate: (view) => {
     const prev = get().currentView;
-    if (prev === view) return; // no-op if same view
+    if (prev === view) return; 
     set({ currentView: view });
-    // Push browser history so mobile back button works within the app
     if (typeof window !== 'undefined') {
       window.history.pushState({ mkView: view }, '', window.location.pathname + window.location.hash);
     }
@@ -718,29 +682,24 @@ export const useGameStore = create<GameState>((set, get) => ({
     const isAdmin = get().user?.role === 'admin';
     if (mode && isAdmin) {
       set({ adminMode: true, currentView: get().currentView.startsWith('admin-') ? get().currentView : 'admin-dashboard' });
-      // Set hash to #admin for direct URL access
       if (typeof window !== 'undefined' && window.location.hash !== '#admin') {
         window.history.replaceState(null, '', '#admin');
       }
     } else {
       set({ adminMode: false, currentView: 'home' });
-      // Clear hash when switching back to user mode
       if (typeof window !== 'undefined' && window.location.hash === '#admin') {
         window.history.replaceState(null, '', window.location.pathname);
       }
     }
-    // Persist adminMode
     const state = get();
     persistAuth(state.user, state.authToken);
   },
 
-  // -- Data fetchers --
   fetchGames: async () => {
     try {
       const res = await authFetch('/api/games');
       const json = await safeResponseJson(res);
       if (json.success) {
-        // Also refresh selectedGame so it never goes stale
         const currentSelected = get().selectedGame;
         let updatedSelected = currentSelected;
         if (currentSelected) {
@@ -749,9 +708,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         }
         set({ games: json.data, selectedGame: updatedSelected });
       }
-    } catch {
-      // Silently fail
-    }
+    } catch {}
   },
 
   fetchAdminGames: async () => {
@@ -767,9 +724,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         }
         set({ games: json.data, selectedGame: updatedSelected });
       }
-    } catch {
-      // Silently fail
-    }
+    } catch {}
   },
 
   fetchBids: async (filters?: { status?: string; gameId?: string }) => {
@@ -783,9 +738,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       if (json.success) {
         set({ bids: json.data });
       }
-    } catch {
-      // Silently fail
-    }
+    } catch {}
   },
 
   fetchBanners: async () => {
@@ -795,9 +748,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       if (json.success) {
         set({ banners: Array.isArray(json.data) ? json.data : [] });
       }
-    } catch {
-      // Silently fail
-    }
+    } catch {}
   },
 
   fetchNotifications: async () => {
@@ -807,9 +758,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       if (json.success) {
         set({ notifications: json.data });
       }
-    } catch {
-      // Silently fail
-    }
+    } catch {}
   },
 
   fetchWallet: async () => {
@@ -822,15 +771,10 @@ export const useGameStore = create<GameState>((set, get) => ({
           walletTransactions: json.data.transactions,
         });
       }
-    } catch {
-      // Silently fail
-    }
+    } catch {}
   },
 
-  // -- User actions --
   placeBid: async (gameId, bidType, number, amount, targetDate?) => {
-    // Server decides the target date (today vs tomorrow) based on IST time and game state
-    // We do NOT send targetDate from the client — eliminates all timezone mismatch issues
     let res: Response;
     try {
       res = await authFetch('/api/bids', {
@@ -894,7 +838,6 @@ export const useGameStore = create<GameState>((set, get) => ({
     }
   },
 
-  // -- Bank detail actions --
   fetchBankDetail: async () => {
     try {
       const res = await authFetch('/api/bank-detail');
@@ -902,9 +845,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       if (json.success) {
         set({ bankDetail: json.data || null });
       }
-    } catch {
-      // Silently fail
-    }
+    } catch {}
   },
 
   saveBankDetail: async (data) => {
@@ -926,7 +867,6 @@ export const useGameStore = create<GameState>((set, get) => ({
     }
   },
 
-  // -- Mark notifications read --
   markNotificationsRead: async (ids) => {
     try {
       await authFetch('/api/notifications/read', {
@@ -935,12 +875,9 @@ export const useGameStore = create<GameState>((set, get) => ({
       body: JSON.stringify({ ids }),
       });
       get().fetchNotifications();
-    } catch {
-      // Silently fail
-    }
+    } catch {}
   },
 
-  // -- Site config actions --
   fetchSiteConfig: async () => {
     try {
       const res = await fetch('/api/config');
@@ -948,19 +885,15 @@ export const useGameStore = create<GameState>((set, get) => ({
       if (json.success) {
         set({ siteConfig: json.data });
       }
-    } catch {
-      // Silently fail - use defaults
-    }
+    } catch {}
   },
 
-  // -- Admin actions --
   fetchAdminDashboard: async () => {
     try {
       const res = await authFetch('/api/admin/dashboard');
       const json = await safeResponseJson(res);
       if (json.success && json.data) {
         const data = json.data;
-        // Ensure all expected fields exist with safe defaults
         set({
           adminStats: {
             ...data,
@@ -970,9 +903,7 @@ export const useGameStore = create<GameState>((set, get) => ({
           }
         });
       }
-    } catch {
-      // Silently fail
-    }
+    } catch {}
   },
 
   fetchAdminUsers: async (page = 1, search = '') => {
@@ -985,9 +916,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         const users = Array.isArray(json.data) ? json.data : (json.data?.users || []);
         set({ adminUsers: users });
       }
-    } catch {
-      // Silently fail
-    }
+    } catch {}
   },
 
   fetchAdminWalletRequests: async (filters?: { status?: string; dateFrom?: string; dateTo?: string; type?: string }) => {
@@ -1002,13 +931,10 @@ export const useGameStore = create<GameState>((set, get) => ({
       const json = await safeResponseJson(res);
       if (json.success) {
         const data = json.data;
-        // API may return {transactions: [...], pagination: {...}} or [...]
         const list = Array.isArray(data) ? data : (data.transactions || []);
         set({ adminWalletRequests: list });
       }
-    } catch {
-      // Silently fail
-    }
+    } catch {}
   },
 
   approveRejectWallet: async (id, status, adminNote?) => {
@@ -1046,7 +972,6 @@ export const useGameStore = create<GameState>((set, get) => ({
     }
     toast({ title: 'Result Declared', description: json.message });
     get().fetchAdminDashboard();
-    // Refresh games so todayResultDeclared/nextDayBiddingAvailable updates immediately
     get().fetchGames();
   },
 
@@ -1097,9 +1022,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       if (json.success) {
         set({ adminConfigs: Array.isArray(json.data) ? json.data : [] });
       }
-    } catch {
-      // Silently fail
-    }
+    } catch {}
   },
 
   updateAdminConfigs: async (configs) => {
@@ -1191,7 +1114,6 @@ export const useGameStore = create<GameState>((set, get) => ({
         set({ adminBids: bids, adminBidsSummary: summary, bidFilterGameId: filters?.gameId || null });
       }
     } catch {
-      // Ensure adminBids is always an array even on error
       set({ adminBids: [], adminBidsSummary: null });
     }
   },
@@ -1305,7 +1227,6 @@ export const useGameStore = create<GameState>((set, get) => ({
     }
   },
 
-  // -- Referral actions --
   fetchReferralEarnings: async () => {
     try {
       const res = await authFetch('/api/referral/earnings');
@@ -1313,9 +1234,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       if (json.success) {
         set({ referralEarnings: json.data });
       }
-    } catch {
-      // Silently fail
-    }
+    } catch {}
   },
 
   fetchAdminReferrals: async (search = '') => {
@@ -1336,11 +1255,9 @@ export const useGameStore = create<GameState>((set, get) => ({
     }
   },
 
-  // -- Game play actions --
   selectGame: (game) => {
     const prev = get().currentView;
     set({ selectedGame: game, currentView: 'game-play' });
-    // Push browser history so back button returns to previous view
     if (typeof window !== 'undefined' && prev !== 'game-play') {
       window.history.pushState({ mkView: 'game-play' }, '', window.location.pathname + window.location.hash);
     }

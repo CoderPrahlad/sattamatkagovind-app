@@ -1,61 +1,28 @@
 import { PrismaClient } from '@prisma/client'
-import path from 'path';
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined
-  dbConnecting: Promise<void> | undefined
-  dbInitialized: boolean | undefined
 }
 
 /**
- * Resolve the DATABASE_URL to an absolute path.
- * Handles both relative and absolute paths.
- * - Relative paths (e.g., "file:./db/custom.db") are resolved relative to the project root
- * - Absolute paths (e.g., "file:/var/data/custom.db") are used as-is
- * This ensures the database works correctly when deployed to VPS/local machines
- * where the project directory path is different.
- */
-function resolveDatabaseUrl(envUrl: string): string {
-  if (!envUrl) {
-    // Default: use relative path to project root
-    const dbPath = path.join(process.cwd(), 'db', 'custom.db');
-    return `file:${dbPath}`;
-  }
-
-  // If it's already an absolute path, use as-is
-  if (envUrl.startsWith('file:/')) {
-    return envUrl;
-  }
-
-  // If it's a relative path like "file:./db/custom.db", resolve it
-  if (envUrl.startsWith('file:./')) {
-    const relativePath = envUrl.replace('file:', '');
-    const absolutePath = path.resolve(process.cwd(), relativePath);
-    return `file:${absolutePath}`;
-  }
-
-  // For non-file URLs (e.g., PostgreSQL), return as-is
-  return envUrl;
-}
-
-/**
- * Create a PrismaClient with robust connection handling:
- * - SQLite WAL mode for concurrent reads
- * - busy_timeout for write contention
- * - Connection pool settings
- * - Query timeout to prevent hanging requests
- * - Error logging in all environments
- * - Absolute path resolution for database file
+ * Create a PrismaClient optimized for Hostinger MySQL (shared hosting).
+ * - connection_limit=3: Hostinger shared hosting allows very few simultaneous connections
+ * - pool_timeout=20: wait up to 20s for a connection from pool before error
+ * - connect_timeout=30: wait up to 30s to establish initial connection
+ * - socket_timeout=30: wait up to 30s for query response
  */
 function createPrismaClient(): PrismaClient {
-  // Resolve DATABASE_URL to absolute path for VPS compatibility
-  const resolvedUrl = resolveDatabaseUrl(process.env.DATABASE_URL || '');
+  const baseUrl = process.env.DATABASE_URL || '';
 
-  // Add SQLite pragmas to DATABASE_URL for better concurrency
-  let url = resolvedUrl;
-  if (url.startsWith('file:') && !url.includes('connection_limit')) {
+  if (!baseUrl) {
+    throw new Error('[DB] DATABASE_URL environment variable is not set!');
+  }
+
+  // Add MySQL connection pool params if not already present
+  let url = baseUrl;
+  if (!url.includes('connection_limit')) {
     const separator = url.includes('?') ? '&' : '?';
-    url += `${separator}connection_limit=10&busy_timeout=10000`;
+    url += `${separator}connection_limit=3&pool_timeout=20&connect_timeout=30&socket_timeout=30`;
   }
 
   console.log(`[DB] Database URL resolved to: ${url.split('?')[0]}`);
@@ -71,7 +38,6 @@ function createPrismaClient(): PrismaClient {
   });
 }
 
-// Log Prisma events for debugging
 function setupPrismaLogging(client: PrismaClient) {
   if (typeof client.on === 'function') {
     client.on('error' as any, (e: any) => {
@@ -84,10 +50,8 @@ function setupPrismaLogging(client: PrismaClient) {
 }
 
 export const db =
-  globalForPrisma.prisma ??
-  createPrismaClient();
+  globalForPrisma.prisma ?? createPrismaClient();
 
-// Setup logging for the newly created client
 if (!globalForPrisma.prisma) {
   setupPrismaLogging(db);
 }
@@ -95,42 +59,18 @@ if (!globalForPrisma.prisma) {
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = db;
 
 /**
- * Initialize SQLite pragmas for optimal performance under load.
- * MUST be called once on server startup.
- * - WAL mode: allows concurrent reads while writing
- * - busy_timeout: retries writes instead of immediate SQLITE_BUSY error
- * - synchronous=NORMAL: safe with WAL, much faster writes
- * - cache_size: larger cache for 10K users
- * - temp_store: memory-based temp tables
+ * MySQL does NOT need PRAGMA initialization (that's SQLite only).
+ * This function is kept for compatibility but does nothing for MySQL.
  */
 export async function initializeDatabase(): Promise<void> {
-  if (globalForPrisma.dbInitialized) return;
-
-  try {
-    // Use $queryRawUnsafe for PRAGMA statements since SQLite returns results
-    await db.$queryRawUnsafe('PRAGMA journal_mode=WAL');
-    await db.$queryRawUnsafe('PRAGMA busy_timeout=10000');
-    await db.$queryRawUnsafe('PRAGMA synchronous=NORMAL');
-    await db.$queryRawUnsafe('PRAGMA cache_size=-64000'); // 64MB cache
-    await db.$queryRawUnsafe('PRAGMA temp_store=MEMORY');
-    await db.$queryRawUnsafe('PRAGMA mmap_size=268435456'); // 256MB mmap
-    console.log('[DB] SQLite pragmas initialized: WAL mode, busy_timeout=10s, synchronous=NORMAL');
-    globalForPrisma.dbInitialized = true;
-  } catch (error) {
-    console.error('[DB] Failed to initialize SQLite pragmas:', error);
-    // Don't throw - app can still work, just slower
-    globalForPrisma.dbInitialized = true; // Mark as initialized even on error to prevent retries
-  }
+  // MySQL: no initialization needed
+  // SQLite PRAGMA statements removed — they cause errors on MySQL
+  console.log('[DB] MySQL database ready.');
 }
 
 /**
  * Execute a Prisma query with retry logic.
- * Retries on connection errors and SQLITE_BUSY up to maxRetries times with exponential backoff.
- *
- * @example
- * ```ts
- * const user = await withRetry(() => db.user.findUnique({ where: { mobile } }));
- * ```
+ * Retries on connection errors and transaction timeouts.
  */
 export async function withRetry<T>(
   operation: () => Promise<T>,
@@ -140,7 +80,7 @@ export async function withRetry<T>(
     context?: string;
   } = {}
 ): Promise<T> {
-  const { maxRetries = 3, baseDelay = 200, context = 'DB operation' } = options;
+  const { maxRetries = 3, baseDelay = 300, context = 'DB operation' } = options;
   let lastError: unknown;
 
   for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {
@@ -149,14 +89,16 @@ export async function withRetry<T>(
     } catch (error: unknown) {
       lastError = error;
       const errorMsg = error instanceof Error ? error.message : String(error);
+
       const isRetriableError =
-        errorMsg.includes('SQLITE_BUSY') ||
-        errorMsg.includes('database is locked') ||
-        errorMsg.includes('unable to open database file') ||
-        errorMsg.includes('disk I/O error') ||
-        errorMsg.includes('CONNECTION') ||
+        errorMsg.includes('Can\'t reach database server') ||
+        errorMsg.includes('Connection refused') ||
+        errorMsg.includes('Unable to start a transaction') ||
+        errorMsg.includes('Transaction already closed') ||
         errorMsg.includes('Timed out') ||
-        errorMsg.includes('Transaction already closed');
+        errorMsg.includes('connection pool') ||
+        errorMsg.includes('ECONNRESET') ||
+        errorMsg.includes('ETIMEDOUT');
 
       if (isRetriableError && attempt <= maxRetries) {
         const delay = baseDelay * Math.pow(2, attempt - 1) + Math.random() * 100;
@@ -165,8 +107,8 @@ export async function withRetry<T>(
         continue;
       }
 
-      // Non-retriable error or retries exhausted
-      console.error(`[${context}] Failed after ${attempt} attempt(s):`,
+      console.error(
+        `[${context}] Failed after ${attempt} attempt(s):`,
         error instanceof Error ? error.message : error
       );
       throw error;
