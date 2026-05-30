@@ -17,52 +17,33 @@ export const POST = apiHandler(async (request) => {
   const rawUtrNumber = body.utrNumber as string | undefined;
   const rawScreenshotUrl = body.screenshotUrl as string | undefined;
 
-  if (!rawAmount || !rawUpiNumber) {
-    return apiError('Amount and UPI number are required');
-  }
+  if (!rawAmount || !rawUpiNumber) return apiError('Amount and UPI number are required');
+  if (!isValidAmount(rawAmount, 1)) return apiError('Amount must be a positive number');
 
-  if (!isValidAmount(rawAmount, 1)) {
-    return apiError('Amount must be a positive number');
-  }
-
-  // Sanitize inputs
   const upiNumber = sanitizeUPI(rawUpiNumber);
   const utrNumber = rawUtrNumber ? sanitizeUTR(rawUtrNumber) : null;
   const screenshotUrl = rawScreenshotUrl || null;
 
-  // Get minimum deposit amount from config
-  const minDepositConfig = await db.gameConfig.findUnique({
-    where: { key: 'min_deposit_amount' },
-  });
+  const minDepositConfig = await db.gameConfig.findUnique({ where: { key: 'min_deposit_amount' } });
   const minAmount = minDepositConfig ? parseFloat(minDepositConfig.value) : 200;
+  if (rawAmount < minAmount) return apiError(`Minimum deposit amount is ₹${minAmount}`);
 
-  // Reject if below minimum amount (don't auto-correct)
-  if (rawAmount < minAmount) {
-    return apiError(`Minimum deposit amount is ₹${minAmount}`);
-  }
-
-  // Check maximum deposit amount
-  const maxDepositConfig = await db.gameConfig.findUnique({
-    where: { key: 'max_deposit_amount' },
-  });
+  const maxDepositConfig = await db.gameConfig.findUnique({ where: { key: 'max_deposit_amount' } });
   const maxAmount = maxDepositConfig ? parseFloat(maxDepositConfig.value) : 100000;
-  if (rawAmount > maxAmount) {
-    return apiError(`Maximum deposit amount is ₹${maxAmount.toLocaleString('en-IN')}`);
-  }
+  if (rawAmount > maxAmount) return apiError(`Maximum deposit amount is ₹${maxAmount.toLocaleString('en-IN')}`);
 
-  const finalAmount = rawAmount;
-
-  // Get user info for email alert
   const user = await db.user.findUnique({
     where: { id: session.userId },
-    select: { name: true, mobile: true },
+    select: { name: true, mobile: true, referredBy: true, referralBonusClaimed: true },
   });
+
+  if (!user) return apiError('User not found', 404);
 
   const transaction = await db.walletTransaction.create({
     data: {
       userId: session.userId,
       type: 'deposit',
-      amount: finalAmount,
+      amount: rawAmount,
       status: 'pending',
       upiNumber,
       utrNumber,
@@ -70,22 +51,23 @@ export const POST = apiHandler(async (request) => {
     },
   });
 
-  // Invalidate wallet cache
   cacheDeleteByPrefix(`wallet:${session.userId}`);
 
-  // Send email alert to admin (fire-and-forget, don't block response)
+  // NOTE: Referral bonus admin approve karne pe dega — yahan sirf request create ho rahi hai
+  // Referral bonus logic admin/wallet/[id]/route.ts mein hoga (approve ke waqt)
+
   if (user) {
     sendRechargeAlert({
       userName: user.name,
       userMobile: user.mobile,
-      amount: finalAmount,
+      amount: rawAmount,
       upiNumber,
       utrNumber,
       screenshotUrl,
     }).catch(() => {});
   }
 
-  logger.info('Recharge', 'Deposit request created', { userId: session.userId, amount: finalAmount });
+  logger.info('Recharge', 'Deposit request created', { userId: session.userId, amount: rawAmount });
 
   return apiSuccess(transaction, 'Recharge request submitted. Awaiting approval.');
 }, { rateLimit: RATE_LIMITS.RECHARGE, rateLimitSuffix: 'recharge' });

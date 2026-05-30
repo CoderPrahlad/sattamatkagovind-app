@@ -8,28 +8,27 @@ datasource db {
 }
 
 model User {
-  id            String   @id @default(cuid())
-  name          String
-  mobile        String   @unique
-  password      String
-  role          String   @default("user")
-  balance       Float    @default(0)
-  winningAmount Float    @default(0)
-  referralBalance Float @default(0)
-  referralCode  String   @unique
-  referredBy    String?
-  referrer      User?    @relation("Referral", fields: [referredBy], references: [id])
-  referredUsers User[]   @relation("Referral")
-  isActive            Boolean  @default(true)
-  referralBonusClaimed Boolean  @default(false)
-  createdAt           DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  bids           Bid[]
-  transactions   WalletTransaction[]
-  notifications  Notification[]
-  tickets        SupportTicket[]
-  bankDetail     BankDetail?
+  id                   String              @id @default(cuid())
+  name                 String
+  mobile               String              @unique
+  password             String
+  role                 String              @default("user")
+  balance              Float               @default(0)
+  winningAmount        Float               @default(0)
+  referralCode         String              @unique
+  referredBy           String?
+  isActive             Boolean             @default(true)
+  referralBonusClaimed Boolean             @default(false)
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+  referralBalance      Float               @default(0)
+  bankDetail           BankDetail?
+  bids                 Bid[]
+  notifications        Notification[]
+  tickets              SupportTicket[]
+  referrer             User?               @relation("Referral", fields: [referredBy], references: [id])
+  referredUsers        User[]              @relation("Referral")
+  transactions         WalletTransaction[]
 
   @@index([role])
   @@index([isActive])
@@ -38,37 +37,34 @@ model User {
 }
 
 model Game {
-  id          String   @id @default(cuid())
-  name        String   @unique
-  openTime    String
-  closeTime   String
-  isOpen      Boolean  @default(true)
-  sortOrder   Int      @default(0)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  results     GameResult[]
-  bids        Bid[]
+  id        String       @id @default(cuid())
+  name      String       @unique
+  openTime  String
+  closeTime String
+  isOpen    Boolean      @default(true)
+  sortOrder Int          @default(0)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+  bids      Bid[]
+  results   GameResult[]
 }
 
 model GameResult {
-  id        String   @id @default(cuid())
-  gameId    String
-  game      Game     @relation(fields: [gameId], references: [id])
-  result    String
-  date      String
+  id         String   @id @default(cuid())
+  gameId     String
+  result     String
+  date       String
   declaredAt DateTime @default(now())
+  game       Game     @relation(fields: [gameId], references: [id])
 
-  @@index([gameId, date])
   @@unique([gameId, date])
+  @@index([gameId, date])
 }
 
 model Bid {
   id         String   @id @default(cuid())
   userId     String
-  user       User     @relation(fields: [userId], references: [id])
   gameId     String
-  game       Game     @relation(fields: [gameId], references: [id])
   bidType    String
   number     String
   amount     Float
@@ -77,6 +73,8 @@ model Bid {
   targetDate String
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+  game       Game     @relation(fields: [gameId], references: [id])
+  user       User     @relation(fields: [userId], references: [id])
 
   @@index([userId])
   @@index([gameId])
@@ -88,24 +86,24 @@ model Bid {
 }
 
 model WalletTransaction {
-  id        String   @id @default(cuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id])
-  type      String
-  amount    Float
-  status    String   @default("pending")
-  upiNumber String?
-  bankAccount String?
-  bankName  String?
-  ifscCode  String?
+  id            String   @id @default(cuid())
+  userId        String
+  type          String
+  amount        Float
+  status        String   @default("pending")
+  upiNumber     String?
+  bankAccount   String?
+  bankName      String?
+  ifscCode      String?
   accountHolder String?
   accountNumber String?
-  upiId        String?
-  utrNumber    String?
+  upiId         String?
+  utrNumber     String?
   screenshotUrl String?
-  adminNote    String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  adminNote     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  user          User     @relation(fields: [userId], references: [id])
 
   @@index([userId])
   @@index([status])
@@ -119,12 +117,12 @@ model WalletTransaction {
 model Notification {
   id        String   @id @default(cuid())
   userId    String?
-  user      User?    @relation(fields: [userId], references: [id])
   title     String
   message   String
   type      String   @default("info")
   isRead    Boolean  @default(false)
   createdAt DateTime @default(now())
+  user      User?    @relation(fields: [userId], references: [id])
 
   @@index([userId])
   @@index([isRead])
@@ -151,44 +149,44 @@ model GameConfig {
 }
 
 model BankDetail {
-  id              String   @id @default(cuid())
-  userId          String   @unique
-  user            User     @relation(fields: [userId], references: [id])
-  accountHolder   String?
-  accountNumber   String?
-  ifscCode        String?
-  bankName        String?
-  upiId           String?
-  isDefault       Boolean  @default(true)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  accountHolder String?
+  accountNumber String?
+  ifscCode      String?
+  bankName      String?
+  upiId         String?
+  isDefault     Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  user          User     @relation(fields: [userId], references: [id])
 }
 
 model SupportTicket {
-  id        String   @id @default(cuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id])
-  subject   String
-  message   String
-  type      String   @default("general")
-  status    String   @default("open")
-  priority  String   @default("normal")
+  id         String        @id @default(cuid())
+  userId     String
+  subject    String
+  message    String
+  type       String        @default("general")
+  status     String        @default("open")
+  priority   String        @default("normal")
   adminReply String?
-  replies   TicketReply[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+  user       User          @relation(fields: [userId], references: [id])
+  replies    TicketReply[]
 
   @@index([userId])
   @@index([status])
 }
 
 model TicketReply {
-  id        String   @id @default(cuid())
+  id        String        @id @default(cuid())
   ticketId  String
-  ticket    SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
   message   String
-  isAdmin   Boolean  @default(false)
-  createdAt DateTime @default(now())
+  isAdmin   Boolean       @default(false)
+  createdAt DateTime      @default(now())
+  ticket    SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
 
   @@index([ticketId])
   @@index([createdAt])
@@ -206,7 +204,6 @@ model OtpEntry {
   @@index([mobile, purpose])
 }
 
-// ─── NEW: APK Download Tracking ───────────────────────────
 model AppDownload {
   id           String   @id @default(cuid())
   downloadedAt DateTime @default(now())

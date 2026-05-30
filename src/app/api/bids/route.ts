@@ -76,20 +76,18 @@ export const POST = apiHandler(async (request) => {
 
   if (!user) return apiError('User not found', 404);
 
-  /**
-   * BALANCE SPLIT LOGIC:
-   * Ideal split: 35% from winningAmount, 10% from referralBalance, 55% from deposit
-   * 
-   * deposit = balance - winningAmount - referralBalance
-   * (balance is total of all three)
-   * 
-   * If any source is insufficient, the shortfall is covered by deposit.
-   * If total is still insufficient → error.
-   */
   const round2 = (n: number) => Math.round(n * 100) / 100;
 
+  /**
+   * BALANCE SPLIT LOGIC:
+   * - 30% from winningAmount (if available, else deposit covers)
+   * - 10% from referralBalance/bonus (if available, else deposit covers)
+   * - Remaining from deposit
+   * - Never error if deposit can cover the shortfall
+   */
+
   // Ideal shares
-  const idealWinning  = round2(amount * 0.35);
+  const idealWinning  = round2(amount * 0.30);
   const idealReferral = round2(amount * 0.10);
   const idealDeposit  = round2(amount - idealWinning - idealReferral);
 
@@ -113,7 +111,7 @@ export const POST = apiHandler(async (request) => {
 
   if (totalCovered < amount) {
     return apiError(
-      `Insufficient balance. Required: ₹${amount} | Available — Winning: ₹${availableWinning}, Referral: ₹${availableReferral}, Deposit: ₹${availableDeposit}`
+      `Insufficient balance. Required: ₹${amount} | Available — Winning: ₹${availableWinning}, Bonus: ₹${availableReferral}, Deposit: ₹${availableDeposit}`
     );
   }
 
@@ -130,7 +128,7 @@ export const POST = apiHandler(async (request) => {
       if (r.count === 0) throw new Error('INSUFFICIENT_BALANCE');
     }
 
-    // 2. Deduct referralBalance bucket
+    // 2. Deduct referralBalance/bonus bucket
     if (actualReferral > 0) {
       const r = await tx.user.updateMany({
         where: { id: session.userId, referralBalance: { gte: actualReferral } },
@@ -158,7 +156,7 @@ export const POST = apiHandler(async (request) => {
         type: 'bid',
         amount: -amount,
         status: 'approved',
-        adminNote: `Winning: ₹${actualWinning} | Referral: ₹${actualReferral} | Deposit: ₹${actualDeposit}`,
+        adminNote: `Winning: ₹${actualWinning} | Bonus: ₹${actualReferral} | Deposit: ₹${actualDeposit}`,
       },
     });
 
@@ -183,7 +181,7 @@ export const POST = apiHandler(async (request) => {
     userId: session.userId,
     gameId, bidType, number, amount,
     winningUsed: actualWinning,
-    referralUsed: actualReferral,
+    bonusUsed: actualReferral,
     depositUsed: actualDeposit,
     targetDate: resolvedTargetDate,
   });

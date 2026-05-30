@@ -19,7 +19,7 @@ export const PUT = apiHandler(async (request, context) => {
     return apiError('Status must be "approved" or "rejected"');
   }
 
-  let referralBonusResult: { bonusGiven: boolean; bonusAmount: number; referrerName: string } | null = null;
+  let referralBonusResult: { bonusGiven: boolean; bonusAmount: number; referrerName: string; isFirstDeposit: boolean } | null = null;
 
   const result = await withRetry(
     () => db.$transaction(async (tx) => {
@@ -51,90 +51,79 @@ export const PUT = apiHandler(async (request, context) => {
       if (transaction.status !== 'pending') throw new Error('ALREADY_PROCESSED');
 
       // ── DEPOSIT APPROVE ──────────────────────────────────────────
-      // Add to balance only (not winningAmount — deposits are not winnings)
       if (transaction.type === 'deposit' && status === 'approved') {
+        // User ke balance mein add karo (deposit bucket — winning nahi)
         await tx.user.update({
           where: { id: transaction.userId },
           data: { balance: { increment: transaction.amount } },
         });
 
         // === REFERRAL BONUS LOGIC ===
-        if (transaction.user.referredBy && !transaction.user.referralBonusClaimed) {
-          const bonusEnabled = await tx.gameConfig.findUnique({
-            where: { key: 'referral_bonus_enabled' },
+        // Referrer hai toh bonus do — first deposit 10%, baad mein 5% lifetime
+        if (transaction.user.referredBy) {
+          const referrer = await tx.user.findUnique({
+            where: { id: transaction.user.referredBy },
+            select: { id: true, name: true, isActive: true },
           });
 
-          if (bonusEnabled && bonusEnabled.value === 'true') {
-            const bonusPctConfig = await tx.gameConfig.findUnique({
-              where: { key: 'referral_bonus_percentage' },
-            });
-            const bonusPercentage = bonusPctConfig ? parseFloat(bonusPctConfig.value) || 0 : 10;
+          if (referrer && referrer.isActive) {
+            const isFirstDeposit = !transaction.user.referralBonusClaimed;
 
-            const bonusMaxConfig = await tx.gameConfig.findUnique({
-              where: { key: 'referral_bonus_max_amount' },
-            });
-            const bonusMaxAmount = bonusMaxConfig ? parseFloat(bonusMaxConfig.value) || 0 : 50;
+            // First deposit → 10%, baad mein → 5%
+            const bonusPercentage = isFirstDeposit ? 10 : 5;
+            const bonusAmount = Math.round((transaction.amount * bonusPercentage) / 100 * 100) / 100;
 
-            if (bonusPercentage > 0 && bonusMaxAmount > 0) {
-              const calculatedBonus = (transaction.amount * bonusPercentage) / 100;
-              const bonusAmount = Math.min(calculatedBonus, bonusMaxAmount);
-              const finalBonus = Math.round(bonusAmount * 100) / 100;
+            if (bonusAmount > 0) {
+              // Referrer ko referralBalance mein bonus do (withdraw nahi hoga, sirf bet mein)
+              await tx.user.update({
+                where: { id: referrer.id },
+                data: {
+                  balance: { increment: bonusAmount },
+                  referralBalance: { increment: bonusAmount },
+                },
+              });
 
-              if (finalBonus > 0) {
-                const referrer = await tx.user.findUnique({
-                  where: { id: transaction.user.referredBy },
-                  select: { id: true, name: true, balance: true, isActive: true },
+              await tx.walletTransaction.create({
+                data: {
+                  userId: referrer.id,
+                  type: 'deposit',
+                  amount: bonusAmount,
+                  status: 'approved',
+                  adminNote: `Referral bonus: ${transaction.user.name} (${transaction.user.mobile}) ne ₹${transaction.amount} deposit kiya. ${bonusPercentage}% = ₹${bonusAmount} (${isFirstDeposit ? '1st deposit' : 'repeat deposit'})`,
+                },
+              });
+
+              // First deposit flag set karo
+              if (isFirstDeposit) {
+                await tx.user.update({
+                  where: { id: transaction.userId },
+                  data: { referralBonusClaimed: true },
                 });
-
-                if (referrer && referrer.isActive) {
-                  // ✅ Referral bonus → balance + referralBalance both
-                  await tx.user.update({
-                    where: { id: referrer.id },
-                    data: {
-                      balance: { increment: finalBonus },
-                      referralBalance: { increment: finalBonus },
-                    },
-                  });
-
-                  await tx.walletTransaction.create({
-                    data: {
-                      userId: referrer.id,
-                      type: 'deposit',
-                      amount: finalBonus,
-                      status: 'approved',
-                      adminNote: `Referral bonus: ${transaction.user.name} (${transaction.user.mobile}) did 1st recharge of ₹${transaction.amount}. ${bonusPercentage}% = ₹${finalBonus}`,
-                    },
-                  });
-
-                  await tx.user.update({
-                    where: { id: transaction.userId },
-                    data: { referralBonusClaimed: true },
-                  });
-
-                  referralBonusResult = {
-                    bonusGiven: true,
-                    bonusAmount: finalBonus,
-                    referrerName: referrer.name,
-                  };
-
-                  logger.info('Referral', `₹${finalBonus} bonus given to ${referrer.name} for referring ${transaction.user.name}`);
-                }
               }
+
+              referralBonusResult = {
+                bonusGiven: true,
+                bonusAmount,
+                referrerName: referrer.name,
+                isFirstDeposit,
+              };
+
+              logger.info('Referral',
+                `₹${bonusAmount} (${bonusPercentage}%) bonus → ${referrer.name} for ${isFirstDeposit ? 'first' : 'repeat'} deposit by ${transaction.user.name}`
+              );
             }
           }
         }
       }
 
       // ── DEPOSIT REJECT ───────────────────────────────────────────
-      // Deposit was not yet added (added only on approve), so nothing to refund
-      // Just update status to rejected
+      // Balance add nahi hua tha, kuch refund nahi karna
 
       // ── WITHDRAWAL APPROVE ───────────────────────────────────────
-      // Balance was already deducted when user placed the request.
-      // Just update status to approved — no balance change needed.
+      // Balance already deduct ho chuka tha request ke waqt, kuch change nahi
 
       // ── WITHDRAWAL REJECT ────────────────────────────────────────
-      // Refund winningAmount + balance because they were deducted immediately on request
+      // Refund karo — winningAmount + balance dono wapas
       if (transaction.type === 'withdrawal' && status === 'rejected') {
         const refundAmount = Math.abs(transaction.amount);
         await tx.user.update({
@@ -144,10 +133,10 @@ export const PUT = apiHandler(async (request, context) => {
             balance: { increment: refundAmount },
           },
         });
-        logger.info('AdminWallet', `Withdrawal rejected, ₹${refundAmount} refunded to user ${transaction.userId}`);
+        logger.info('AdminWallet', `Withdrawal rejected, ₹${refundAmount} refunded to ${transaction.userId}`);
       }
 
-      // ── UPDATE STATUS ─────────────────────────────────────────────
+      // ── STATUS UPDATE ─────────────────────────────────────────────
       const updateData: Record<string, unknown> = { status };
       if (adminNote) {
         updateData.adminNote = sanitizeText(String(adminNote));
@@ -183,7 +172,7 @@ export const PUT = apiHandler(async (request, context) => {
 
   let message = `Transaction ${status} successfully`;
   if (referralBonusResult?.bonusGiven) {
-    message += `. ₹${referralBonusResult.bonusAmount} referral bonus given to ${referralBonusResult.referrerName}`;
+    message += `. ₹${referralBonusResult.bonusAmount} referral bonus (${referralBonusResult.isFirstDeposit ? '10% first deposit' : '5% repeat'}) given to ${referralBonusResult.referrerName}`;
   }
 
   logger.info('AdminWallet', `Transaction ${id} ${String(status)} by admin ${admin.userId}`);
