@@ -78,42 +78,29 @@ export const POST = apiHandler(async (request) => {
 
   const round2 = (n: number) => Math.round(n * 100) / 100;
 
-  /**
-   * BALANCE SPLIT LOGIC:
-   * - 30% from winningAmount (if available, else deposit covers)
-   * - 10% from referralBalance/bonus (if available, else deposit covers)
-   * - Remaining from deposit
-   * - Never error if deposit can cover the shortfall
-   */
-
-  // Ideal shares
-  const idealWinning  = round2(amount * 0.30);
-  const idealReferral = round2(amount * 0.10);
-  const idealDeposit  = round2(amount - idealWinning - idealReferral);
-
-  // Actual available in each bucket
-  const availableWinning  = user.winningAmount;
-  const availableReferral = user.referralBalance;
-  // deposit = total balance minus the other two tracked buckets
+  // Available in each bucket
+  const availableWinning  = round2(user.winningAmount);
+  const availableReferral = round2(user.referralBalance);
   const availableDeposit  = round2(user.balance - user.winningAmount - user.referralBalance);
+  const totalAvailable    = round2(user.balance); // winning + referral + deposit sab mila ke
 
-  // Clamp each bucket to what's available; shortfall rolls to deposit
-  const actualWinning  = round2(Math.min(idealWinning, availableWinning));
-  const winningShortfall = round2(idealWinning - actualWinning);
-
-  const actualReferral = round2(Math.min(idealReferral, availableReferral));
-  const referralShortfall = round2(idealReferral - actualReferral);
-
-  const depositNeeded = round2(idealDeposit + winningShortfall + referralShortfall);
-  const actualDeposit = round2(Math.min(depositNeeded, availableDeposit));
-
-  const totalCovered = round2(actualWinning + actualReferral + actualDeposit);
-
-  if (totalCovered < amount) {
+  // Sirf total check — kisi bhi bucket se aaye, chalta hai
+  if (totalAvailable < amount) {
     return apiError(
       `Insufficient balance. Required: ₹${amount} | Available — Winning: ₹${availableWinning}, Bonus: ₹${availableReferral}, Deposit: ₹${availableDeposit}`
     );
   }
+
+  // Priority deduction: winning → referral → deposit
+  let remaining = amount;
+
+  const actualWinning = round2(Math.min(remaining, availableWinning));
+  remaining = round2(remaining - actualWinning);
+
+  const actualReferral = round2(Math.min(remaining, availableReferral));
+  remaining = round2(remaining - actualReferral);
+
+  const actualDeposit = round2(Math.min(remaining, availableDeposit));
 
   const result = await db.$transaction(async (tx) => {
     // 1. Deduct winningAmount bucket
