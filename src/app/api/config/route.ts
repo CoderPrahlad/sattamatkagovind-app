@@ -7,7 +7,6 @@ import { db } from '@/lib/db';
 const CONFIG_CACHE_KEY = 'config:public';
 
 export const GET = apiHandler(async () => {
-  // Check cache first
   const cached = cacheGet<{
     whatsappNumber: string;
     telegramLink: string;
@@ -20,6 +19,8 @@ export const GET = apiHandler(async () => {
     referralBonusEnabled: boolean;
     referralBonusPercentage: number;
     referralBonusMaxAmount: number;
+    firstDepositBonusAmount: number;
+    firstDepositMinAmount: number;
   }>(CONFIG_CACHE_KEY);
   if (cached) {
     logger.debug('Config', 'Cache hit');
@@ -36,8 +37,11 @@ export const GET = apiHandler(async () => {
     'min_deposit_amount',
     'site_name',
     'referral_bonus_enabled',
+    'referral_deposit_percent',
     'referral_bonus_percentage',
     'referral_bonus_max_amount',
+    'first_deposit_bonus_amount',
+    'first_deposit_min_amount',
   ];
 
   const configs = await db.gameConfig.findMany({
@@ -49,7 +53,6 @@ export const GET = apiHandler(async () => {
     configMap[c.key] = c.value;
   }
 
-  // Parse payment methods from JSON string, default to ['upi', 'bank']
   let paymentMethods: string[] = ['upi', 'bank'];
   if (configMap['payment_methods']) {
     try {
@@ -74,15 +77,24 @@ export const GET = apiHandler(async () => {
       : 200,
     siteName: configMap['site_name'] || 'MatkaKing',
     referralBonusEnabled: configMap['referral_bonus_enabled'] === 'true',
-    referralBonusPercentage: configMap['referral_bonus_percentage']
-      ? parseFloat(configMap['referral_bonus_percentage'])
-      : 10,
+    // referral_deposit_percent = admin panel wala actual field
+    // referral_bonus_percentage = fallback
+    referralBonusPercentage: configMap['referral_deposit_percent']
+      ? parseFloat(configMap['referral_deposit_percent'])
+      : configMap['referral_bonus_percentage']
+        ? parseFloat(configMap['referral_bonus_percentage'])
+        : 1,
     referralBonusMaxAmount: configMap['referral_bonus_max_amount']
       ? parseFloat(configMap['referral_bonus_max_amount'])
       : 50,
+    firstDepositBonusAmount: configMap['first_deposit_bonus_amount']
+      ? parseFloat(configMap['first_deposit_bonus_amount'])
+      : 50,
+    firstDepositMinAmount: configMap['first_deposit_min_amount']
+      ? parseFloat(configMap['first_deposit_min_amount'])
+      : 500,
   };
 
-  // Cache the result
   cacheSet(CONFIG_CACHE_KEY, data, CACHE_TTL.CONFIG);
 
   return apiSuccess(data);

@@ -659,7 +659,8 @@ function GamePlayView() {
       return dateStr;
     }
   };
-const handlePlaceBid = async () => {
+
+  const handlePlaceBid = async () => {
     if (!selectedGame || selectedNumbers.length === 0) return;
     setPlacing(true);
 
@@ -2167,9 +2168,11 @@ function ProfileView() {
     ? `${window.location.origin}${window.location.pathname}?ref=${user?.referralCode || ''}`
     : '';
 
-  const bonusPercentage = siteConfig.referralBonusPercentage || 10;
-  const bonusMaxAmount = siteConfig.referralBonusMaxAmount || 50;
-  const bonusEnabled = siteConfig.referralBonusEnabled;
+  // ✅ FIXED: Now dynamically fetching the new lifetime 1% and ₹50 fixed bonus from config
+  const config = siteConfig as any;
+ const depositPercent = config.referralBonusPercentage || 1;
+const firstDepositBonus = config.referralBonusMaxAmount || 50;
+  const bonusEnabled = config.referralBonusEnabled !== false;
 
   const handleCopyReferralLink = async () => {
     try {
@@ -2311,9 +2314,10 @@ function ProfileView() {
             </div>
           )}
 
+          {/* ✅ FIXED TEXT: Empty State Referral Text */}
           {referralEarnings && referralEarnings.referredUsersCount === 0 && (
             <p className="text-[11px] text-gray-500 text-center py-2">
-              No referrals yet. Share your code with friends to earn ${bonusPercentage}% of their 1st recharge (max ₹${bonusMaxAmount})!
+              No referrals yet. Share your code with friends to earn {depositPercent}% commission on every deposit + ₹{firstDepositBonus} bonus on their 1st deposit!
             </p>
           )}
         </CardContent>
@@ -2328,7 +2332,10 @@ function ProfileView() {
             </div>
             <div>
               <h3 className="text-sm font-semibold text-white">Refer & Earn</h3>
-              <p className="text-[11px] text-gray-500">{bonusEnabled ? `Earn ${bonusPercentage}% of friend's 1st recharge (max ₹${bonusMaxAmount})` : 'Referral bonus currently disabled'}</p>
+              {/* ✅ FIXED TEXT: Dynamic Bonus Subtitle */}
+              <p className="text-[11px] text-gray-500">
+                {bonusEnabled ? `Earn ${depositPercent}% on every deposit + ₹${firstDepositBonus} on 1st deposit` : 'Referral bonus currently disabled'}
+              </p>
             </div>
           </div>
 
@@ -2364,7 +2371,6 @@ function ProfileView() {
 
           {/* Share Buttons */}
           <div className="space-y-2">
-            {/* Share with Friends - Native Share / Copy Link */}
             <button
               onClick={handleShareReferral}
               className="w-full py-2.5 rounded-lg bg-gradient-to-r from-purple-600 to-pink-500 hover:from-purple-500 hover:to-pink-400 text-white text-sm font-semibold transition-all duration-200 flex items-center justify-center gap-2"
@@ -2380,7 +2386,6 @@ function ProfileView() {
               {copied ? 'Link Copied!' : 'Copy Referral Link'}
             </button>
             <div className="grid grid-cols-2 gap-2">
-              {/* WhatsApp Share */}
               <a
                 href={`https://wa.me/?text=${encodeURIComponent(`Join MatkaKing and play to win big! 🎮\n\nUse my referral code: ${user?.referralCode}\n\nLink: ${referralLink}`)}`}
                 target="_blank"
@@ -2390,7 +2395,6 @@ function ProfileView() {
                 <MessageCircle className="w-4 h-4" />
                 WhatsApp
               </a>
-              {/* Telegram Share */}
               <a
                 href={`https://t.me/share/url?url=${encodeURIComponent(referralLink)}&text=${encodeURIComponent(`Join MatkaKing and play to win big! 🎮\n\nUse my referral code: ${user?.referralCode}`)}`}
                 target="_blank"

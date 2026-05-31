@@ -7,6 +7,10 @@ import { db } from '@/lib/db';
 import { requireAuth } from '@/lib/auth';
 import { getTodayIST, getTomorrowIST, isInClosingWindow } from '@/lib/time';
 
+// ✅ FIXED: Next.js ki aggressive route caching band ki taaki refresh pe hamesha fresh data aaye
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 export const POST = apiHandler(async (request) => {
   const session = await requireAuth(request);
   const { data: body, error: parseError } = await parseJsonBody(request);
@@ -68,7 +72,6 @@ export const POST = apiHandler(async (request) => {
     return apiError('Next-day bidding is not available yet.');
   }
 
-  // Get user balances
   const user = await db.user.findUnique({
     where: { id: session.userId },
     select: { balance: true, winningAmount: true, referralBalance: true },
@@ -77,52 +80,35 @@ export const POST = apiHandler(async (request) => {
   if (!user) return apiError('User not found', 404);
 
   const round2 = (n: number) => Math.round(n * 100) / 100;
-
-  // deposit bucket = total balance minus winningAmount minus referralBalance
   const depositBalance = round2(user.balance - user.winningAmount - user.referralBalance);
 
-  /**
-   * NEW BET LOGIC:
-   * 1. PEHLE deposit balance se cut karo
-   * 2. Deposit kam pad gaya → winningAmount se baaki cut karo
-   * 3. Phir bhi kam → referralBalance se cut karo
-   */
   let fromDeposit = 0;
   let fromWinning = 0;
   let fromReferral = 0;
-
   let remaining = amount;
 
-  // Step 1: Deposit balance use karo
   const useDeposit = Math.min(remaining, depositBalance);
   fromDeposit = round2(useDeposit);
   remaining = round2(remaining - fromDeposit);
 
-  // Step 2: Winning amount use karo
   if (remaining > 0) {
     const useWinning = Math.min(remaining, user.winningAmount);
     fromWinning = round2(useWinning);
     remaining = round2(remaining - fromWinning);
   }
 
-  // Step 3: Referral balance use karo (last resort)
   if (remaining > 0) {
     const useReferral = Math.min(remaining, user.referralBalance);
     fromReferral = round2(useReferral);
     remaining = round2(remaining - fromReferral);
   }
 
-  // Check if total covered
   const totalCovered = round2(fromDeposit + fromWinning + fromReferral);
-
   if (totalCovered < amount) {
-    return apiError(
-      `Insufficient balance. Required: ₹${amount} | Available — Deposit: ₹${depositBalance}, Winning: ₹${user.winningAmount}, Bonus: ₹${user.referralBalance}`
-    );
+    return apiError(`Insufficient balance. Required: ₹${amount} | Available — Deposit: ₹${depositBalance}, Winning: ₹${user.winningAmount}, Bonus: ₹${user.referralBalance}`);
   }
 
   const result = await db.$transaction(async (tx) => {
-    // 1. Deduct from deposit (balance)
     if (fromDeposit > 0) {
       const r = await tx.user.updateMany({
         where: { id: session.userId, balance: { gte: fromDeposit } },
@@ -131,7 +117,6 @@ export const POST = apiHandler(async (request) => {
       if (r.count === 0) throw new Error('INSUFFICIENT_BALANCE');
     }
 
-    // 2. Deduct from winningAmount (and balance)
     if (fromWinning > 0) {
       const r = await tx.user.updateMany({
         where: { id: session.userId, winningAmount: { gte: fromWinning } },
@@ -143,7 +128,6 @@ export const POST = apiHandler(async (request) => {
       if (r.count === 0) throw new Error('INSUFFICIENT_BALANCE');
     }
 
-    // 3. Deduct from referralBalance (and balance)
     if (fromReferral > 0) {
       const r = await tx.user.updateMany({
         where: { id: session.userId, referralBalance: { gte: fromReferral } },
@@ -155,7 +139,6 @@ export const POST = apiHandler(async (request) => {
       if (r.count === 0) throw new Error('INSUFFICIENT_BALANCE');
     }
 
-    // Create wallet transaction
     await tx.walletTransaction.create({
       data: {
         userId: session.userId,
@@ -192,9 +175,7 @@ export const POST = apiHandler(async (request) => {
     targetDate: resolvedTargetDate,
   });
 
-  return apiSuccess(result, resolvedTargetDate === today
-    ? 'Bid placed successfully'
-    : `Bid placed for ${resolvedTargetDate}`);
+  return apiSuccess(result, resolvedTargetDate === today ? 'Bid placed successfully' : `Bid placed for ${resolvedTargetDate}`);
 }, { rateLimit: RATE_LIMITS.BID, rateLimitSuffix: 'bid' });
 
 export const GET = apiHandler(async (request) => {
@@ -202,10 +183,14 @@ export const GET = apiHandler(async (request) => {
   const { searchParams } = new URL(request.url);
   const status = searchParams.get('status');
   const gameId = searchParams.get('gameId');
+  
+  // ✅ FIXED: targetDate parameter add kiya. Ab refresh karne par frontend exact date ki bid fetch kar payega.
+  const targetDate = searchParams.get('targetDate');
 
   const where: Record<string, unknown> = { userId: session.userId };
   if (status) where.status = status;
   if (gameId) where.gameId = gameId;
+  if (targetDate) where.targetDate = targetDate;
 
   const bids = await db.bid.findMany({
     where,

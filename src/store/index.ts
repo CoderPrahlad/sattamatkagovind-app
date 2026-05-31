@@ -197,7 +197,8 @@ interface GameState {
   setAdminMode: (mode: boolean) => void;
 
   fetchGames: () => Promise<void>;
-  fetchBids: (filters?: { status?: string; gameId?: string }) => Promise<void>;
+  // ✅ ADDED targetDate IN INTERFACE
+  fetchBids: (filters?: { status?: string; gameId?: string; targetDate?: string }) => Promise<void>;
   fetchBanners: () => Promise<void>;
   fetchNotifications: () => Promise<void>;
   fetchWallet: () => Promise<void>;
@@ -513,7 +514,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     minDepositAmount: 200,
     siteName: 'MatkaKing',
     referralBonusEnabled: true,
-    referralBonusPercentage: 10,
+    referralBonusPercentage: 1,
     referralBonusMaxAmount: 50,
   },
 
@@ -547,6 +548,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       get().fetchGames();
       get().fetchBanners();
       get().fetchNotifications();
+      get().fetchBids();  
     } catch (error) {
       toast({ title: 'Error', description: getFetchErrorMessage(error), variant: 'destructive' });
     }
@@ -615,7 +617,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     toast({ title: 'Logged out', description: 'See you soon!' });
   },
 
-  // FIXED checkSession: Don't clear state on 401. Only explicit rejections clear the state.
+  // FIXED checkSession: Added fetchBids() and fetchWallet() on session restore
   checkSession: async () => {
     try {
       let token = get().authToken;
@@ -648,6 +650,10 @@ export const useGameStore = create<GameState>((set, get) => ({
         get().fetchGames();
         get().fetchBanners();
         get().fetchNotifications();
+        
+        // ✅ FIXED: Refresh karne par bids aur wallet state bhi fetch hogi ab!
+        get().fetchBids();
+        get().fetchWallet();
       } else {
         console.warn('[checkSession] Session token was explicitly rejected. Clearing auth.');
         set({ user: null, authToken: null, isAuthenticated: false, currentView: 'auth' });
@@ -668,7 +674,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       }
     }
   },
-
+  
   navigate: (view) => {
     const prev = get().currentView;
     if (prev === view) return; 
@@ -727,18 +733,31 @@ export const useGameStore = create<GameState>((set, get) => ({
     } catch {}
   },
 
-  fetchBids: async (filters?: { status?: string; gameId?: string }) => {
+  // ✅ FIXED: targetDate support & cache-busting added here
+  fetchBids: async (filters?: { status?: string; gameId?: string; targetDate?: string }) => {
     try {
       const params = new URLSearchParams();
+      // Cache-busting timestamp tag to prevent zero bids on refresh
+      params.set('_t', Date.now().toString());
+
       if (filters?.status) params.set('status', filters.status);
       if (filters?.gameId) params.set('gameId', filters.gameId);
+      
+      // TargetDate support lagaya jisse frontend sahi date ki bids maang sake
+      if (filters?.targetDate) params.set('targetDate', filters.targetDate);
+
       const query = params.toString() ? `?${params.toString()}` : '';
       const res = await authFetch(`/api/bids${query}`);
       const json = await safeResponseJson(res);
+      
       if (json.success) {
         set({ bids: json.data });
+      } else {
+         set({ bids: [] });
       }
-    } catch {}
+    } catch {
+       set({ bids: [] });
+    }
   },
 
   fetchBanners: async () => {

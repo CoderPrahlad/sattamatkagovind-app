@@ -5,6 +5,9 @@ import { RATE_LIMITS } from '@/lib/rate-limit';
 import { sanitizeText } from '@/lib/sanitizer';
 import { logger } from '@/lib/logger';
 
+// Caching hatao taaki approval hamesha real-time update ho
+export const dynamic = 'force-dynamic';
+
 export const PUT = apiHandler(async (request, context) => {
   const admin = await requireAdmin(request);
   const params = await context!.params;
@@ -58,26 +61,31 @@ export const PUT = apiHandler(async (request, context) => {
           data: { balance: { increment: transaction.amount } },
         });
 
-        // ── SIGNUP BONUS (1st deposit par) ──────────────────
+        // ══════════════════════════════════════════════════════════════
+        // ✅ ₹50 BONUS for referred user on 1st deposit >= ₹500
+        // ══════════════════════════════════════════════════════════════
         const isFirstDeposit = !transaction.user.referralBonusClaimed;
 
-        if (isFirstDeposit) {
-          const signupBonusConfig = await tx.gameConfig.findUnique({ where: { key: 'signup_bonus' } });
-          const signupBonus = signupBonusConfig ? parseFloat(signupBonusConfig.value) : 50;
+        if (isFirstDeposit && transaction.user.referredBy) {
+          const bonusAmountConfig = await tx.gameConfig.findUnique({ where: { key: 'first_deposit_bonus_amount' } });
+          const minDepositConfig = await tx.gameConfig.findUnique({ where: { key: 'first_deposit_min_amount' } });
 
-          if (signupBonus > 0) {
+          const bonusAmount = bonusAmountConfig ? parseFloat(bonusAmountConfig.value) : 50;
+          const minDepositAmount = minDepositConfig ? parseFloat(minDepositConfig.value) : 500;
+
+          if (bonusAmount > 0 && transaction.amount >= minDepositAmount) {
             await tx.user.update({
               where: { id: transaction.userId },
-              data: { balance: { increment: signupBonus } },
+              data: { balance: { increment: bonusAmount } },
             });
 
             await tx.walletTransaction.create({
               data: {
                 userId: transaction.userId,
                 type: 'deposit',
-                amount: signupBonus,
+                amount: bonusAmount,
                 status: 'approved',
-                adminNote: `Signup bonus: ₹${signupBonus} (1st deposit)`,
+                adminNote: `First deposit bonus: ₹${bonusAmount} (deposited ₹${transaction.amount} >= ₹${minDepositAmount})`,
               },
             });
 
@@ -86,41 +94,47 @@ export const PUT = apiHandler(async (request, context) => {
               data: { referralBonusClaimed: true },
             });
 
-            signupBonusResult = { bonusGiven: true, bonusAmount: signupBonus };
-            logger.info('SignupBonus', `₹${signupBonus} → ${transaction.user.name} (${transaction.user.mobile}) on 1st deposit`);
+            signupBonusResult = { bonusGiven: true, bonusAmount };
+            logger.info('FirstDepositBonus', `₹${bonusAmount} → ${transaction.user.name} (${transaction.user.mobile}) on 1st deposit of ₹${transaction.amount}`);
+          } else if (transaction.amount < minDepositAmount) {
+            logger.info('FirstDepositBonus', `Skipped for ${transaction.user.name}: deposit ₹${transaction.amount} < min ₹${minDepositAmount}.`);
           }
+        } else if (isFirstDeposit && !transaction.user.referredBy) {
+          await tx.user.update({
+            where: { id: transaction.userId },
+            data: { referralBonusClaimed: true },
+          });
         }
 
-        // ── REFERRAL COMMISSION → REFERRER KE WINNING AMOUNT ──
+        // ══════════════════════════════════════════════════════════════
+        // ✅ REFERRAL COMMISSION: LIFETIME % on EVERY deposit
+        // ══════════════════════════════════════════════════════════════
         if (transaction.user.referredBy) {
-          logger.info('Referral', `User ${transaction.user.name} (${transaction.user.mobile}) has referredBy=${transaction.user.referredBy}`);
-
           const referrer = await tx.user.findUnique({
             where: { id: transaction.user.referredBy },
             select: { id: true, name: true, isActive: true },
           });
 
           if (referrer && referrer.isActive) {
-            // NEW keys first, fallback to OLD key for compatibility
-            const firstPercentConfig = await tx.gameConfig.findUnique({ where: { key: 'referral_first_deposit_percent' } });
-            const subsequentPercentConfig = await tx.gameConfig.findUnique({ where: { key: 'referral_subsequent_deposit_percent' } });
+            const percentConfig = await tx.gameConfig.findUnique({ where: { key: 'referral_deposit_percent' } });
             const fallbackConfig = await tx.gameConfig.findUnique({ where: { key: 'referral_bonus_percentage' } });
-            const fallbackVal = fallbackConfig ? parseFloat(fallbackConfig.value) : null;
 
-            const firstPercent = firstPercentConfig ? parseFloat(firstPercentConfig.value) : (fallbackVal ?? 10);
-            const subsequentPercent = subsequentPercentConfig ? parseFloat(subsequentPercentConfig.value) : (fallbackVal ?? 5);
+            const bonusPercentage = percentConfig
+              ? parseFloat(percentConfig.value)
+              : fallbackConfig
+                ? parseFloat(fallbackConfig.value)
+                : 1;
 
-            const bonusPercentage = isFirstDeposit ? firstPercent : subsequentPercent;
             const bonusAmount = Math.round((transaction.amount * bonusPercentage) / 100 * 100) / 100;
-
-            logger.info('Referral', `amount=${transaction.amount}, isFirst=${isFirstDeposit}, percent=${bonusPercentage}, bonus=${bonusAmount}, referrer=${referrer.name}`);
 
             if (bonusAmount > 0) {
               await tx.user.update({
                 where: { id: referrer.id },
                 data: {
+                  // ✅ UPDATE: Referral aur Winning dono mein add hoga
+                  referralBalance: { increment: bonusAmount },
                   winningAmount: { increment: bonusAmount },
-                  balance: { increment: bonusAmount },
+                  balance: { increment: bonusAmount }, // Total balance main add
                 },
               });
 
@@ -130,7 +144,7 @@ export const PUT = apiHandler(async (request, context) => {
                   type: 'deposit',
                   amount: bonusAmount,
                   status: 'approved',
-                  adminNote: `Referral commission: ${transaction.user.name} (${transaction.user.mobile}) deposited ₹${transaction.amount}. ${bonusPercentage}% = ₹${bonusAmount} (${isFirstDeposit ? '1st deposit' : 'repeat deposit'})`,
+                  adminNote: `Referral commission: ${transaction.user.name} (${transaction.user.mobile}) deposited ₹${transaction.amount}. ${bonusPercentage}% = ₹${bonusAmount}`,
                 },
               });
 
@@ -140,16 +154,8 @@ export const PUT = apiHandler(async (request, context) => {
                 referrerName: referrer.name,
                 isFirstDeposit,
               };
-
-              logger.info('Referral',
-                `✅ ₹${bonusAmount} (${bonusPercentage}%) → ${referrer.name} for ${isFirstDeposit ? 'first' : 'repeat'} deposit by ${transaction.user.name}`
-              );
             }
-          } else {
-            logger.info('Referral', `Referrer not found or inactive. referrerId=${transaction.user.referredBy}`);
           }
-        } else {
-          logger.info('Referral', `No referrer for user ${transaction.user.name}. referredBy is NULL.`);
         }
       }
 
@@ -202,10 +208,10 @@ export const PUT = apiHandler(async (request, context) => {
 
   let message = `Transaction ${status} successfully`;
   if (signupBonusResult?.bonusGiven) {
-    message += `. ₹${signupBonusResult.bonusAmount} signup bonus given to user`;
+    message += `. ₹${signupBonusResult.bonusAmount} first deposit bonus given to user`;
   }
   if (referralBonusResult?.bonusGiven) {
-    message += `. ₹${referralBonusResult.bonusAmount} referral commission (${referralBonusResult.isFirstDeposit ? 'first deposit' : 'repeat deposit'}) given to ${referralBonusResult.referrerName}`;
+    message += `. ₹${referralBonusResult.bonusAmount} referral commission given to ${referralBonusResult.referrerName}`;
   }
 
   logger.info('AdminWallet', `Transaction ${id} ${String(status)} by admin ${admin.userId}`);

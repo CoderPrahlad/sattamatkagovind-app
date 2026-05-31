@@ -13,16 +13,31 @@ const DEFAULT_CONFIGS = [
   { key: 'telegram_enabled', value: 'false' },
   { key: 'min_withdraw_amount', value: '500' },
   { key: 'min_deposit_amount', value: '200' },
+  { key: 'max_deposit_amount', value: '100000' },
   { key: 'max_bid_amount', value: '10000' },
   { key: 'max_numbers_per_bid', value: '10' },
   { key: 'upi_id', value: '' },
   { key: 'qr_code_url', value: '' },
   { key: 'payment_methods', value: '["upi","bank"]' },
   { key: 'site_name', value: 'MatkaKing' },
-  { key: 'referral_bonus_percentage', value: '10' },
+
+  // ── Referral System Configs (Admin Panel se change kar sakte ho) ──
+  // ✅ CHANGED: Default referral % is now 1 (was 10)
+  { key: 'referral_bonus_percentage', value: '1' },
+
+  // ✅ NEW: Lifetime referral % - referrer ko har deposit pe itna % milega
+  { key: 'referral_deposit_percent', value: '1' },
+
   { key: 'referral_bonus_max_amount', value: '50' },
   { key: 'referral_bonus_enabled', value: 'true' },
-  { key: 'welcome_bonus', value: '100' },
+
+  // ✅ NEW: Referred user ko 1st deposit pe kitna ₹ bonus milega
+  { key: 'first_deposit_bonus_amount', value: '50' },
+
+  // ✅ NEW: Minimum deposit amount to qualify for first deposit bonus
+  { key: 'first_deposit_min_amount', value: '500' },
+
+  { key: 'signup_bonus', value: '0' },
 ];
 
 export const GET = apiHandler(async (request) => {
