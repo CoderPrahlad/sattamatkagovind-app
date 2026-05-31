@@ -2,11 +2,11 @@ import { apiHandler, apiSuccess, apiError } from '@/lib/api-utils';
 import { RATE_LIMITS } from '@/lib/rate-limit';
 import { db } from '@/lib/db';
 import { requireAuth } from '@/lib/auth';
+import { logger } from '@/lib/logger';
 
 export const GET = apiHandler(async (request) => {
   const session = await requireAuth(request);
 
-  // Get user info
   const user = await db.user.findUnique({
     where: { id: session.userId },
     select: {
@@ -14,6 +14,7 @@ export const GET = apiHandler(async (request) => {
       name: true,
       referralCode: true,
       balance: true,
+      winningAmount: true,
     },
   });
 
@@ -21,29 +22,19 @@ export const GET = apiHandler(async (request) => {
     return apiError('User not found', 404);
   }
 
-  // Get all referral bonus transactions for this user (they are the referrer)
-  // These are transactions where adminNote contains "Referral bonus:"
+  // FIX: 'Referral bonus:' → 'Referral' (matches both "Referral bonus:" and "Referral commission:")
   const referralTransactions = await db.walletTransaction.findMany({
     where: {
       userId: session.userId,
       type: 'deposit',
       status: 'approved',
-      adminNote: { contains: 'Referral bonus:' },
+      adminNote: { contains: 'Referral' },
     },
     orderBy: { createdAt: 'desc' },
   });
 
-  // Calculate total referral earnings
   const totalEarnings = referralTransactions.reduce((sum, tx) => sum + tx.amount, 0);
 
-  // Count how many users this person has referred (who used their referral code)
-  const referredUsersCount = await db.user.count({
-    where: {
-      referredBy: session.userId,
-    },
-  });
-
-  // Get the list of referred users (name, mobile, date joined, whether bonus claimed)
   const referredUsers = await db.user.findMany({
     where: {
       referredBy: session.userId,
@@ -58,10 +49,11 @@ export const GET = apiHandler(async (request) => {
     orderBy: { createdAt: 'desc' },
   });
 
-  // Count pending referrals (users who registered but haven't done first recharge yet)
+  const referredUsersCount = referredUsers.length;
   const pendingReferrals = referredUsers.filter(u => !u.referralBonusClaimed).length;
   const completedReferrals = referredUsers.filter(u => u.referralBonusClaimed).length;
 
+  logger.info('ReferralEarnings', `Fetched for user ${session.userId}. Earnings: ₹${totalEarnings}, Referred: ${referredUsersCount}`);
   return apiSuccess({
     totalEarnings,
     referredUsersCount,

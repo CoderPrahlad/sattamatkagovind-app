@@ -15,10 +15,8 @@ export const GET = apiHandler(async (request) => {
     Number(url.searchParams.get('limit')) || undefined
   );
 
-  // Get all users who have referred at least one person
   const referrers = await db.user.findMany({
     where: {
-      // Users who have at least one referred user
       referredUsers: {
         some: {},
       },
@@ -57,7 +55,6 @@ export const GET = apiHandler(async (request) => {
     take: limit,
   });
 
-  // Get referral bonus transactions for all referrers
   const referrerIds = referrers.map((r) => r.id);
 
   const referralTransactions = await db.walletTransaction.findMany({
@@ -65,7 +62,7 @@ export const GET = apiHandler(async (request) => {
       userId: { in: referrerIds },
       type: 'deposit',
       status: 'approved',
-      adminNote: { contains: 'Referral bonus:' },
+      adminNote: { contains: 'Referral' },
     },
     select: {
       id: true,
@@ -77,14 +74,12 @@ export const GET = apiHandler(async (request) => {
     orderBy: { createdAt: 'desc' },
   });
 
-  // Group referral transactions by userId
   const txByUser = new Map<string, typeof referralTransactions>();
   for (const tx of referralTransactions) {
     if (!txByUser.has(tx.userId)) txByUser.set(tx.userId, []);
     txByUser.get(tx.userId)!.push(tx);
   }
 
-  // Build response with computed stats
   const data = referrers.map((referrer) => {
     const referredUsers = referrer.referredUsers;
     const completedReferrals = referredUsers.filter(
@@ -122,7 +117,6 @@ export const GET = apiHandler(async (request) => {
     };
   });
 
-  // Overall stats
   const totalReferrers = await db.user.count({
     where: {
       referredUsers: { some: {} },
@@ -134,7 +128,7 @@ export const GET = apiHandler(async (request) => {
     where: {
       type: 'deposit',
       status: 'approved',
-      adminNote: { contains: 'Referral bonus:' },
+      adminNote: { contains: 'Referral' },
     },
   });
 

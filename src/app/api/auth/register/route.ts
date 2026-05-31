@@ -59,8 +59,7 @@ export const POST = apiHandler(async (request) => {
     if (referrer) referredBy = referrer.id;
   }
 
-  // Joining bonus ₹50 — sirf tab jab referral code se aaya ho
-  const joiningBonus = referredBy ? 50 : 0;
+  // NO SIGNUP BONUS on registration — bonus will be given on 1st deposit approval
 
   const user = await withRetry(
     () => db.user.create({
@@ -70,30 +69,10 @@ export const POST = apiHandler(async (request) => {
         password: hashedPassword,
         referralCode: newReferralCode,
         referredBy,
-        // ₹50 joining bonus referralBalance mein (withdraw nahi hoga, sirf bet mein use hoga)
-        ...(joiningBonus > 0 && {
-          balance: joiningBonus,
-          referralBalance: joiningBonus,
-        }),
       },
     }),
     { context: 'Register: createUser' }
   );
-
-  // Joining bonus transaction record
-  if (joiningBonus > 0) {
-    try {
-      await db.walletTransaction.create({
-        data: {
-          userId: user.id,
-          type: 'deposit',
-          amount: joiningBonus,
-          status: 'approved',
-          adminNote: 'Joining bonus: ₹50 (referral signup)',
-        },
-      });
-    } catch {}
-  }
 
   try {
     await db.otpEntry.deleteMany({ where: { mobile, purpose: 'sms' } });
@@ -101,12 +80,10 @@ export const POST = apiHandler(async (request) => {
 
   const token = createAuthToken(user.id, user.role);
 
-  logger.info('Register', `New user: ${mobile.slice(0, 4)}**** referral=${!!referredBy} joiningBonus=${joiningBonus}`);
+  logger.info('Register', `New user: ${mobile.slice(0, 4)}**** referral=${!!referredBy}`);
 
   return apiSuccess({
     ...excludePassword(user),
     token,
-  }, joiningBonus > 0
-    ? 'Account created successfully! ₹50 joining bonus added.'
-    : 'Account created successfully');
+  }, 'Account created successfully');
 }, { rateLimit: RATE_LIMITS.REGISTER, rateLimitSuffix: 'register' });

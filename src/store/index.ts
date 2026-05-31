@@ -1245,9 +1245,10 @@ export const useGameStore = create<GameState>((set, get) => ({
       const res = await authFetch(`/api/admin/referrals${query}`);
       const json = await safeResponseJson(res);
       if (json.success) {
+        const responseData = json.data;
         set({
-          adminReferrals: Array.isArray(json.data) ? json.data : [],
-          adminReferralStats: json.stats || null,
+          adminReferrals: Array.isArray(responseData?.data) ? responseData.data : (Array.isArray(responseData) ? responseData : []),
+          adminReferralStats: responseData?.stats || null,
         });
       }
     } catch {

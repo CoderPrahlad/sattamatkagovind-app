@@ -21,7 +21,6 @@ export default function AdminConfigView() {
     fetchAdminConfigs();
   }, [fetchAdminConfigs]);
 
-  // Initialize QR preview when config loads
   useEffect(() => {
     const currentQr = getConfigValue('qr_code_url', '');
     if (currentQr) setQrPreview(currentQr);
@@ -62,7 +61,6 @@ export default function AdminConfigView() {
       toast({ title: 'Upload Error', description: msg, variant: 'destructive' });
     } finally {
       setUploadingQr(false);
-      // Reset file input
       e.target.value = '';
     }
   };
@@ -102,8 +100,10 @@ export default function AdminConfigView() {
   const handleSaveReferral = async () => {
     const referralConfigs = [
       { key: 'referral_bonus_enabled', value: editValues['referral_bonus_enabled'] ?? getConfigValue('referral_bonus_enabled', 'true') },
-      { key: 'referral_bonus_percentage', value: editValues['referral_bonus_percentage'] ?? getConfigValue('referral_bonus_percentage', '10') },
+      { key: 'referral_first_deposit_percent', value: editValues['referral_first_deposit_percent'] ?? getConfigValue('referral_first_deposit_percent', '10') },
+      { key: 'referral_subsequent_deposit_percent', value: editValues['referral_subsequent_deposit_percent'] ?? getConfigValue('referral_subsequent_deposit_percent', '5') },
       { key: 'referral_bonus_max_amount', value: editValues['referral_bonus_max_amount'] ?? getConfigValue('referral_bonus_max_amount', '50') },
+      { key: 'signup_bonus', value: editValues['signup_bonus'] ?? getConfigValue('signup_bonus', '50') },
     ];
     setSaving(true);
     await updateAdminConfigs(referralConfigs);
@@ -178,7 +178,6 @@ export default function AdminConfigView() {
               onChange={(v) => setEditValues({ ...editValues, upi_id: v })}
               placeholder="name@upi"
             />
-            {/* QR Code Upload */}
             <div>
               <label className="text-xs font-medium text-gray-400 mb-1 block">QR Code Image</label>
               <div className="flex items-center gap-3">
@@ -231,7 +230,7 @@ export default function AdminConfigView() {
           <CardContent className="p-4 space-y-3">
             <h3 className="text-sm font-semibold text-white mb-2">Other Configuration</h3>
             {adminConfigs
-              .filter(c => !['whatsapp_number', 'telegram_link', 'telegram_enabled', 'upi_id', 'qr_code_url', 'payment_methods', 'min_deposit_amount', 'referral_bonus_enabled', 'referral_bonus_percentage', 'referral_bonus_max_amount', 'referral_bonus', 'referral_bonus_amount'].includes(c.key))
+              .filter(c => !['whatsapp_number', 'telegram_link', 'telegram_enabled', 'upi_id', 'qr_code_url', 'payment_methods', 'min_deposit_amount', 'referral_bonus_enabled', 'referral_bonus_percentage', 'referral_first_deposit_percent', 'referral_subsequent_deposit_percent', 'referral_bonus_max_amount', 'referral_bonus', 'referral_bonus_amount', 'signup_bonus'].includes(c.key))
               .map((c) => (
               <div key={c.id} className="flex flex-col sm:flex-row gap-2">
                 <div className="sm:w-40 shrink-0">
@@ -251,7 +250,7 @@ export default function AdminConfigView() {
         <CardContent className="p-4 space-y-4">
           <h3 className="text-sm font-semibold text-white flex items-center gap-2">
             <Gift className="w-4 h-4 text-purple-400" />
-            Referral Bonus Settings
+            Referral & Bonus Settings
           </h3>
           <div className="space-y-3">
             <div>
@@ -269,16 +268,32 @@ export default function AdminConfigView() {
                   {getConfigValue('referral_bonus_enabled', 'true') === 'true' ? 'Enabled' : 'Disabled'}
                 </span>
               </button>
-              <p className="text-[11px] text-gray-500 mt-1">When enabled, referrer gets bonus when referred user&apos;s 1st recharge is approved</p>
+              <p className="text-[11px] text-gray-500 mt-1">When enabled, referrer gets commission when referred user&apos;s recharge is approved</p>
             </div>
             <InputField
-              label="Referral Bonus Percentage (%)"
-              value={getConfigValue('referral_bonus_percentage', '10')}
-              onChange={(v) => setEditValues({ ...editValues, referral_bonus_percentage: v })}
+              label="First Deposit Referral % (1st deposit par)"
+              value={getConfigValue('referral_first_deposit_percent', '10')}
+              onChange={(v) => setEditValues({ ...editValues, referral_first_deposit_percent: v })}
               placeholder="10"
               type="number"
             />
-            <p className="text-[11px] text-gray-500 -mt-1">Percentage of recharge amount that referrer will receive as bonus</p>
+            <p className="text-[11px] text-gray-500 -mt-1">Referrer ko first deposit par kitna % milega (e.g. 10% of ₹500 = ₹50)</p>
+            <InputField
+              label="Repeat Deposit Referral % (next deposits par)"
+              value={getConfigValue('referral_subsequent_deposit_percent', '5')}
+              onChange={(v) => setEditValues({ ...editValues, referral_subsequent_deposit_percent: v })}
+              placeholder="5"
+              type="number"
+            />
+            <p className="text-[11px] text-gray-500 -mt-1">Referrer ko repeat deposit par kitna % milega (e.g. 5% of ₹500 = ₹25)</p>
+            <InputField
+              label="Signup Bonus ₹ (1st deposit par milega)"
+              value={getConfigValue('signup_bonus', '50')}
+              onChange={(v) => setEditValues({ ...editValues, signup_bonus: v })}
+              placeholder="50"
+              type="number"
+            />
+            <p className="text-[11px] text-gray-500 -mt-1">New user ko first recharge approve hone par kitna ₹ bonus milega</p>
             <InputField
               label="Max Referral Bonus (₹)"
               value={getConfigValue('referral_bonus_max_amount', '50')}
@@ -286,7 +301,7 @@ export default function AdminConfigView() {
               placeholder="50"
               type="number"
             />
-            <p className="text-[11px] text-gray-500 -mt-1">Maximum bonus amount (e.g. 10% of ₹200 = ₹20, but max ₹50)</p>
+            <p className="text-[11px] text-gray-500 -mt-1">Maximum bonus amount per referral transaction</p>
           </div>
           <Button className="w-full bg-purple-500 hover:bg-purple-400 text-white" disabled={saving} onClick={handleSaveReferral}>
             {saving ? 'Saving...' : 'Save Referral Settings'}

@@ -78,73 +78,79 @@ export const POST = apiHandler(async (request) => {
 
   const round2 = (n: number) => Math.round(n * 100) / 100;
 
+  // deposit bucket = total balance minus winningAmount minus referralBalance
+  const depositBalance = round2(user.balance - user.winningAmount - user.referralBalance);
+
   /**
-   * BALANCE SPLIT LOGIC:
-   * - 30% from winningAmount (if available, else deposit covers)
-   * - 10% from referralBalance/bonus (if available, else deposit covers)
-   * - Remaining from deposit
-   * - Never error if deposit can cover the shortfall
+   * NEW BET LOGIC:
+   * 1. PEHLE deposit balance se cut karo
+   * 2. Deposit kam pad gaya → winningAmount se baaki cut karo
+   * 3. Phir bhi kam → referralBalance se cut karo
    */
+  let fromDeposit = 0;
+  let fromWinning = 0;
+  let fromReferral = 0;
 
-  // Ideal shares
-  const idealWinning  = round2(amount * 0.30);
-  const idealReferral = round2(amount * 0.10);
-  const idealDeposit  = round2(amount - idealWinning - idealReferral);
+  let remaining = amount;
 
-  // Actual available in each bucket
-  const availableWinning  = user.winningAmount;
-  const availableReferral = user.referralBalance;
-  // deposit = total balance minus the other two tracked buckets
-  const availableDeposit  = round2(user.balance - user.winningAmount - user.referralBalance);
+  // Step 1: Deposit balance use karo
+  const useDeposit = Math.min(remaining, depositBalance);
+  fromDeposit = round2(useDeposit);
+  remaining = round2(remaining - fromDeposit);
 
-  // Clamp each bucket to what's available; shortfall rolls to deposit
-  const actualWinning  = round2(Math.min(idealWinning, availableWinning));
-  const winningShortfall = round2(idealWinning - actualWinning);
+  // Step 2: Winning amount use karo
+  if (remaining > 0) {
+    const useWinning = Math.min(remaining, user.winningAmount);
+    fromWinning = round2(useWinning);
+    remaining = round2(remaining - fromWinning);
+  }
 
-  const actualReferral = round2(Math.min(idealReferral, availableReferral));
-  const referralShortfall = round2(idealReferral - actualReferral);
+  // Step 3: Referral balance use karo (last resort)
+  if (remaining > 0) {
+    const useReferral = Math.min(remaining, user.referralBalance);
+    fromReferral = round2(useReferral);
+    remaining = round2(remaining - fromReferral);
+  }
 
-  const depositNeeded = round2(idealDeposit + winningShortfall + referralShortfall);
-  const actualDeposit = round2(Math.min(depositNeeded, availableDeposit));
-
-  const totalCovered = round2(actualWinning + actualReferral + actualDeposit);
+  // Check if total covered
+  const totalCovered = round2(fromDeposit + fromWinning + fromReferral);
 
   if (totalCovered < amount) {
     return apiError(
-      `Insufficient balance. Required: ₹${amount} | Available — Winning: ₹${availableWinning}, Bonus: ₹${availableReferral}, Deposit: ₹${availableDeposit}`
+      `Insufficient balance. Required: ₹${amount} | Available — Deposit: ₹${depositBalance}, Winning: ₹${user.winningAmount}, Bonus: ₹${user.referralBalance}`
     );
   }
 
   const result = await db.$transaction(async (tx) => {
-    // 1. Deduct winningAmount bucket
-    if (actualWinning > 0) {
+    // 1. Deduct from deposit (balance)
+    if (fromDeposit > 0) {
       const r = await tx.user.updateMany({
-        where: { id: session.userId, winningAmount: { gte: actualWinning } },
+        where: { id: session.userId, balance: { gte: fromDeposit } },
+        data: { balance: { decrement: fromDeposit } },
+      });
+      if (r.count === 0) throw new Error('INSUFFICIENT_BALANCE');
+    }
+
+    // 2. Deduct from winningAmount (and balance)
+    if (fromWinning > 0) {
+      const r = await tx.user.updateMany({
+        where: { id: session.userId, winningAmount: { gte: fromWinning } },
         data: {
-          winningAmount: { decrement: actualWinning },
-          balance: { decrement: actualWinning },
+          winningAmount: { decrement: fromWinning },
+          balance: { decrement: fromWinning },
         },
       });
       if (r.count === 0) throw new Error('INSUFFICIENT_BALANCE');
     }
 
-    // 2. Deduct referralBalance/bonus bucket
-    if (actualReferral > 0) {
+    // 3. Deduct from referralBalance (and balance)
+    if (fromReferral > 0) {
       const r = await tx.user.updateMany({
-        where: { id: session.userId, referralBalance: { gte: actualReferral } },
+        where: { id: session.userId, referralBalance: { gte: fromReferral } },
         data: {
-          referralBalance: { decrement: actualReferral },
-          balance: { decrement: actualReferral },
+          referralBalance: { decrement: fromReferral },
+          balance: { decrement: fromReferral },
         },
-      });
-      if (r.count === 0) throw new Error('INSUFFICIENT_BALANCE');
-    }
-
-    // 3. Deduct deposit (balance only, no separate bucket field)
-    if (actualDeposit > 0) {
-      const r = await tx.user.updateMany({
-        where: { id: session.userId, balance: { gte: actualDeposit } },
-        data: { balance: { decrement: actualDeposit } },
       });
       if (r.count === 0) throw new Error('INSUFFICIENT_BALANCE');
     }
@@ -156,7 +162,7 @@ export const POST = apiHandler(async (request) => {
         type: 'bid',
         amount: -amount,
         status: 'approved',
-        adminNote: `Winning: ₹${actualWinning} | Bonus: ₹${actualReferral} | Deposit: ₹${actualDeposit}`,
+        adminNote: `Deposit: ₹${fromDeposit} | Winning: ₹${fromWinning} | Bonus: ₹${fromReferral}`,
       },
     });
 
@@ -180,9 +186,9 @@ export const POST = apiHandler(async (request) => {
   logger.info('Bid', 'Bid placed', {
     userId: session.userId,
     gameId, bidType, number, amount,
-    winningUsed: actualWinning,
-    bonusUsed: actualReferral,
-    depositUsed: actualDeposit,
+    depositUsed: fromDeposit,
+    winningUsed: fromWinning,
+    bonusUsed: fromReferral,
     targetDate: resolvedTargetDate,
   });
 
