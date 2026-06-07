@@ -1,8 +1,8 @@
-import type { Metadata, Viewport } from "next";
+import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
-import PWARegister from "@/components/PWARegister";
+import Script from "next/script";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -14,35 +14,18 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-export const viewport: Viewport = {
-  width: "device-width",
-  initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
-  themeColor: "#059669",
-};
-
 export const metadata: Metadata = {
-  title: "MatkaKing",
-  description: "Premium number-based game simulation platform. Play, bid, and win!",
-  manifest: "/manifest.json",
-  appleWebApp: {
-    capable: true,
-    statusBarStyle: "black-translucent",
-    title: "MatkaKing",
-  },
+  title: "MatkaKing - India's Fastest Matka Platform",
+  description: "Secure gaming experience with lightning-fast performance, instant updates, wallet system, live gameplay and seamless mobile access. Download MatkaKing APK now.",
+  keywords: ["MatkaKing", "Matka", "Number Game", "Gaming Platform", "APK Download", "Mobile Gaming"],
+  authors: [{ name: "MatkaKing" }],
   icons: {
-    icon: [
-      { url: "/icons/favicon-32.png", sizes: "32x32", type: "image/png" },
-      { url: "/icons/favicon-16.png", sizes: "16x16", type: "image/png" },
-    ],
-    shortcut: { url: "/favicon.ico" },
-    apple: [
-      { url: "/icons/icon-180.png", sizes: "180x180", type: "image/png" },
-    ],
+    icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%2310b981'/><text x='50' y='68' font-size='50' font-weight='900' fill='black' text-anchor='middle'>MK</text></svg>",
   },
-  other: {
-    "mobile-web-app-capable": "yes",
+  openGraph: {
+    title: "MatkaKing - India's Fastest Matka Platform",
+    description: "Secure gaming with lightning-fast performance, instant updates & wallet system.",
+    type: "website",
   },
 };
 
@@ -52,16 +35,36 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark" suppressHydrationWarning>
-      <head>
-        <link rel="manifest" href="/manifest.json" />
-      </head>
+    <html lang="en" suppressHydrationWarning>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
       >
+        {/* Meta Pixel */}
+        <Script id="meta-pixel" strategy="afterInteractive">
+          {`
+            !function(f,b,e,v,n,t,s)
+            {if(f.fbq)return;n=f.fbq=function(){n.callMethod?
+            n.callMethod.apply(n,arguments):n.queue.push(arguments)};
+            if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';
+            n.queue=[];t=b.createElement(e);t.async=!0;
+            t.src=v;s=b.getElementsByTagName(e)[0];
+            s.parentNode.insertBefore(t,s)}(window, document,'script',
+            'https://connect.facebook.net/en_US/fbevents.js');
+            fbq('init', '1368022922096102');
+            fbq('track', 'PageView');
+          `}
+        </Script>
+        <noscript>
+          <img
+            height="1"
+            width="1"
+            style={{ display: "none" }}
+            src="https://www.facebook.com/tr?id=1368022922096102&ev=PageView&noscript=1"
+          />
+        </noscript>
+
         {children}
         <Toaster />
-        <PWARegister />
       </body>
     </html>
   );
